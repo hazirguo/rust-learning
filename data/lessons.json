@@ -281,6 +281,65 @@
         },
         {
           "kind": "heading",
+          "text": "安装工具链（机器上还没有 Rust 时先做这一步）"
+        },
+        {
+          "kind": "paragraph",
+          "text": "统一用官方的 rustup 安装，不要用操作系统包管理器里的 rustc（版本旧、组件不全）。按你的系统选下面一种装法，装完再做后面的环境核查。"
+        },
+        {
+          "kind": "heading",
+          "text": "macOS / Linux：一行脚本"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "脚本运行后会让你选安装方式，直接回车选默认（标准安装）即可。它会把稳定版工具链装到 ~/.rustup，把 cargo、rustc 等命令装到 ~/.cargo/bin，并把这个目录写进 shell 的 PATH 配置。",
+            "装完让 PATH 在当前终端生效：执行 . \"$HOME/.cargo/env\"，或者关掉终端重新开一个。",
+            "Rust 编译时要调用系统链接器：Linux 先装好 C 工具链（Debian/Ubuntu 是 sudo apt install build-essential，Fedora 是 sudo dnf install gcc）；macOS 先装 Xcode 命令行工具：xcode-select --install。你做 C/C++ 开发，这些大概率已经有了。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "Windows：winget 或安装程序"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "winget install Rustlang.Rustup"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "或者从 rustup.rs 官网下载 rustup-init.exe 运行，一路默认即可，效果完全一样。",
+            "Windows 默认的 MSVC 工具链需要 Microsoft C++ 生成工具（Visual Studio 安装器里的「使用 C++ 的桌面开发」工作负载）：没装的话 rustup-init 会提示并引导安装，先装它再继续，否则代码能编译也链接不过。",
+            "装完新开一个终端，让 PATH 生效后再做环境核查。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "装完补齐组件，并学会更新"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "rustup component add rustfmt clippy rust-analyzer"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "rustfmt 和 clippy 一般随默认工具链一起装好，这条命令是补齐保险；rust-analyzer 经常不在默认组件里（就是下面环境核查里那个真实坑），顺手一起装上。",
+            "编辑器用 VS Code 的话，再装 rust-analyzer 扩展（rust-lang.rust-analyzer），补全和实时报错就有了。",
+            "以后更新工具链只用一条命令：rustup update；卸载是 rustup self uninstall。不要用 sudo 运行安装脚本，rustup 是按当前用户安装的。"
+          ]
+        },
+        {
+          "kind": "heading",
           "text": "环境核查（先做这一步）"
         },
         {
