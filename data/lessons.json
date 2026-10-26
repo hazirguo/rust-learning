@@ -1,0 +1,426 @@
+{
+  "weeks": [
+    {
+      "weekNumber": 1,
+      "title": "环境与所有权入门",
+      "dateRange": "10-26 至 11-01",
+      "topics": [
+        "装 rustup、cargo、rust-analyzer、clippy、rustfmt，跑通 hello world 与 cargo test；官方书第 1-3 章速过（与 C 的差异点做笔记即可）",
+        "官方书第 4 章所有权前半：move、clone、栈与堆；Rustlings variables / functions / move_semantics 起步",
+        "官方书第 4 章后半：引用与借用、悬垂引用；Rustlings references / borrowing 组刷完",
+        "Slice 类型与 String vs &str 的区别；Rustlings primitive_types / strings 组",
+        "官方书第 5 章 struct 与方法；用 struct 写一个进程信息小例子（读 /proc/self 的几个字段先不用解析库，手写）",
+        "周末复盘第一周借用报错，整理一份「我踩过的借用检查错误」笔记；Rustlings 第一周相关组全部清完，clippy 在示例项目上跑通"
+      ],
+      "project": "Rustlings 第一周相关组全部清完；用 struct 写一个进程信息小例子",
+      "acceptance": "不查书能解释 move / 借用 / 切片，能预测简单代码是否通过借用检查。"
+    },
+    {
+      "weekNumber": 2,
+      "title": "类型系统与错误处理",
+      "dateRange": "11-02 至 11-08",
+      "topics": [
+        "官方书第 6 章 enum 与模式匹配、第 8 章集合、第 9 章错误处理（Option / Result 与 ? 运算符）",
+        "官方书第 10 章泛型、trait、生命周期（生命周期只求读懂标注含义）",
+        "Rustlings：enums、error_handling、generics、lifetimes 组"
+      ],
+      "project": "项目 1 启动：clap + serde + anyhow 的日志分析 CLI（解析 JSON 配置、统计日志文件、按级别计数）",
+      "acceptance": "项目 1 能跑，错误处理不用 unwrap 硬撑，clippy 零警告。"
+    },
+    {
+      "weekNumber": 3,
+      "title": "工程化与并发基础：智能指针",
+      "dateRange": "11-09 至 11-15",
+      "topics": [
+        "智能指针 Box / Rc / Arc，内部可变性 RefCell / Mutex / RwLock",
+        "crate 与 workspace 组织、单元测试、基准测试入门"
+      ],
+      "project": "项目 2 启动：多线程端口扫描器或文件哈希器（设计任务分发方式）",
+      "acceptance": "能说清 Arc<Mutex<T>> 适用与误用场景。"
+    },
+    {
+      "weekNumber": 4,
+      "title": "工程化与并发基础：线程与 channel",
+      "dateRange": "11-16 至 11-22",
+      "topics": [
+        "Send / Sync 的含义",
+        "线程与 channel（官方书第 15、16 章）",
+        "用 channel 分发任务，对比单线程与多线程耗时"
+      ],
+      "project": "项目 2 完成：多线程端口扫描器或文件哈希器，用 channel 分发任务，与单线程版对比耗时",
+      "acceptance": "项目 2 有对比数据。"
+    },
+    {
+      "weekNumber": 5,
+      "title": "Async：Tokio 基础",
+      "dateRange": "11-23 至 11-29",
+      "topics": [
+        "Tokio 官方教程：runtime、task、async/await",
+        "超时与取消",
+        "《Rust for Rustaceans》开始读（第 1-3 章）"
+      ],
+      "project": "项目 3 启动：HTTP 反向代理的骨架（对位 SPACE 出站网关的结构）",
+      "acceptance": "能解释 async 与多线程的区别。"
+    },
+    {
+      "weekNumber": 6,
+      "title": "Async：服务与反向代理",
+      "dateRange": "11-30 至 12-06",
+      "topics": [
+        "hyper / axum 写一个小服务",
+        "tracing 日志接入",
+        "域名白名单、超时、请求日志"
+      ],
+      "project": "项目 3 完成：HTTP 反向代理，带域名白名单、超时、请求日志（对位 SPACE 出站网关的结构）",
+      "acceptance": "能处理任务取消时的资源释放；代理可运行并有日志。"
+    },
+    {
+      "weekNumber": 7,
+      "title": "系统编程与 unsafe：边界",
+      "dateRange": "12-07 至 12-13",
+      "topics": [
+        "unsafe 的五种能力、裸指针、repr(C)",
+        "内存布局常识",
+        "Rustonomicon 只读前几章，建立边界感"
+      ],
+      "project": "项目 4 启动：读 /proc 与 cgroup 的极简 top（先定数据来源与输出格式）",
+      "acceptance": "unsafe 代码都封装在小块内并有安全接口。"
+    },
+    {
+      "weekNumber": 8,
+      "title": "系统编程与 unsafe：实战",
+      "dateRange": "12-14 至 12-20",
+      "topics": [
+        "FFI 调用 libc",
+        "nix / rustix 做系统调用",
+        "说明每处 unsafe 的不变量"
+      ],
+      "project": "项目 4 完成：读 /proc 与 cgroup 的极简 top，输出指定进程的 CPU / 内存",
+      "acceptance": "能说明每处 unsafe 的不变量；小工具可运行。"
+    },
+    {
+      "weekNumber": 9,
+      "title": "读真源码：rust-vmm 与 Firecracker",
+      "dateRange": "12-21 至 12-27",
+      "topics": [
+        "rust-vmm：vm-memory 或 virtio-queue，追一条完整调用链",
+        "Firecracker：jailer 或 snapshot 选一个模块",
+        "方法：每个模块画一张数据结构加调用链图，并仿写一个最小版本"
+      ],
+      "project": "源码阅读笔记：每个模块的入口、核心结构、错误处理方式",
+      "acceptance": "每个模块能口头讲清入口、核心结构、错误处理方式。"
+    },
+    {
+      "weekNumber": 10,
+      "title": "读真源码：Cloud Hypervisor",
+      "dateRange": "12-28 至 01-03",
+      "topics": [
+        "Cloud Hypervisor：vm-virtio 选一个设备，与此前看过的实现对照",
+        "方法：画数据结构加调用链图，并仿写一个最小版本",
+        "第 10 周末定毕业项目方向（三选一）"
+      ],
+      "project": "源码阅读笔记 + 选定毕业项目方向",
+      "acceptance": "每个模块能口头讲清入口、核心结构、错误处理方式。"
+    },
+    {
+      "weekNumber": 11,
+      "title": "毕业项目：实现",
+      "dateRange": "01-04 至 01-10",
+      "topics": [
+        "三选一：A 极简 Agent 沙箱运行器 / B 出站网关完整版 / C Wasmtime 插件宿主",
+        "先写清设计取舍，再实现核心路径"
+      ],
+      "project": "毕业项目主体实现",
+      "acceptance": "核心功能可运行，README 写清设计取舍。"
+    },
+    {
+      "weekNumber": 12,
+      "title": "毕业项目：收尾验收",
+      "dateRange": "01-11 至 01-17",
+      "topics": [
+        "补测试、清 clippy 警告",
+        "代码上 GitHub，整理 12 周复盘"
+      ],
+      "project": "毕业项目交付",
+      "acceptance": "代码上 GitHub，README 写清设计取舍，clippy 零警告，有测试。"
+    }
+  ],
+  "lessons": [
+    {
+      "dayNumber": 1,
+      "weekNumber": 1,
+      "title": "环境搭建与 Hello World",
+      "lessonDate": "2026-10-26",
+      "goal": "独立装好 Rust 工具链，用 cargo 建工程、跑程序、跑测试，并说出 Rust 工具链与 C/C++ 工具链的三个关键差异。",
+      "summary": "把工具链装好、跑通第一个 cargo 工程，并学会读 rustc 的报错——这是后面 83 天的生存技能。",
+      "body": [
+        {
+          "kind": "heading",
+          "text": "今日目标与 60 分钟时间分配"
+        },
+        {
+          "kind": "paragraph",
+          "text": "学完今天，你应该能：独立装好 Rust 工具链，用 cargo 建工程、跑程序、跑测试，并说出 Rust 工具链与 C/C++ 工具链的三个关键差异。"
+        },
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "环境核查",
+              "minutes": "10 分钟",
+              "detail": "装 rustup 与组件，逐项核对版本号"
+            },
+            {
+              "label": "核心讲解",
+              "minutes": "20 分钟",
+              "detail": "读下文「核心讲解」，对照 C/C++ 做笔记"
+            },
+            {
+              "label": "动手 + 跟练",
+              "minutes": "30 分钟",
+              "detail": "敲一遍代码示例，做完跟练任务并跑通测试"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 工具链：一套，不是四个散件"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C/C++ 世界里，编译器（gcc/clang）、构建系统（make/CMake）、包管理器（vcpkg/conan）、格式化工具（clang-format）是各自独立的东西，版本搭配要自己操心。Rust 把它们收进了一个入口："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "**rustup**：工具链管理器，负责安装、切换 Rust 版本，类似 nvm 之于 Node。`rustc`、`cargo` 都由它分发。",
+            "**rustc**：真正的编译器，只干编译一件事。",
+            "**cargo**：构建 + 包管理 + 测试运行器 + 文档生成，四合一。C++ 里 CMake + Conan + CTest 三件套的工作，cargo 一个人包了。",
+            "**rustfmt / clippy**：官方格式化工具和 lint 工具，随工具链附带。clippy 相当于一个特别啰嗦但基本都对的静态检查器，后面几周会经常被它教育。",
+            "**rust-analyzer**：语言服务器，给编辑器提供补全、跳转、实时报错，地位相当于 C++ 的 clangd。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "一个常见的误解是把 cargo 当成「包管理器」：它首先是构建系统，依赖管理只是它顺带做得很好的部分。另一个误解是装完 rustc 就算装完 Rust：没有 cargo 的 Rust 开发就像没有 CMake 的 C++ 开发，能写，但处处别扭。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 从 C 的翻译视角看第一个程序"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "fn main() {\n    println!(\"Hello, world!\");\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "逐行对照 C："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "`fn main()` 对应 `int main(void)`，但 Rust 的 main 不返回值——正常结束就是成功，想返回非零退出码要用 `std::process::exit`。没有 `return 0;` 可写，也不需要。",
+            "`println!` 后面的 `!` 不是打错了，它表示这是一个**宏**，不是函数。宏在编译期展开，`println!` 能接受可变数量的参数、做格式化字符串的编译期检查——C 的 `printf` 格式串错了是运行时未定义行为，Rust 的 `println!` 格式串错了是编译错误。这个差异后面会反复出现：Rust 倾向于把运行时问题提前到编译期。",
+            "没有 `#include`，没有头文件。Rust 的模块系统用 `mod` 和 `use` 组织代码，编译器自己算依赖关系，不需要像 C 那样靠头文件做前向声明。这是你从 C 转过来最先感到的轻松：再也没有头文件与实现不一致的链接错误。",
+            "没有 `;` 之外的仪式：没有 Makefile，没有 `-o` 指定输出名，`cargo run` 一步完成编译加运行。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "3. 先学会读编译器报错：Rust 最重要的生存技能"
+        },
+        {
+          "kind": "paragraph",
+          "text": "从今天起，把 rustc 的报错当成老师而不是敌人。它的报错固定是三段式："
+        },
+        {
+          "kind": "code",
+          "lang": "text",
+          "code": "error[E0308]: mismatched types\n  --> src/main.rs:2:5\n   |\n 2 |     5\n   |     ^ expected `i32`, found integer"
+        },
+        {
+          "kind": "paragraph",
+          "text": "读法是：**错误代码（E0308）→ 位置（文件:行:列）→ 一句话的问题描述 → 编译器的修改建议**。很多报错最后会附一句 `help:`，直接告诉你改成什么样。养成习惯：先读第一行，再看箭头指向的那一行，最后看 help，不要从报错中间开始读。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "还有一个关键心态差异：C 编译器报错经常是「你写错了语法」；Rust 编译器报错经常是「你写的逻辑在内存安全上站不住脚」。后者看起来更啰嗦，但它阻止的正是 C 里那些半夜查 core dump 的 bug。本周三、周四你会亲手撞上借用检查器的报错，到时就用这个三段式读法拆解它。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. cargo 工程长什么样"
+        },
+        {
+          "kind": "paragraph",
+          "text": "`cargo new hello` 生成的目录只有三个东西值得你现在关心："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "`Cargo.toml`：工程清单，相当于 CMakeLists.txt + package.json 的合体：包名、版本、依赖全写在这里。",
+            "`src/main.rs`：二进制工程的入口。注意：`src/main.rs` 存在即表示这是二进制 crate；如果是 `src/lib.rs`，那就是库 crate。",
+            "`target/`：构建产物目录，相当于 C++ 的 build 目录，不用进版本控制，`cargo clean` 可删。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "常用命令一张表就够了：`cargo build`（编译）、`cargo run`（编译并运行）、`cargo test`（编译并跑测试）、`cargo fmt`（格式化）、`cargo clippy`（lint 检查）。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机用 cargo 实际跑通过：`cargo run`、`cargo test`、`cargo fmt --check`、`cargo clippy -- -D warnings` 四项全部通过（rustc 1.99.1）。照抄就能跑，跑不通先对照「环境核查」一节。"
+        },
+        {
+          "kind": "heading",
+          "text": "环境核查（先做这一步）"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "rustc --version\ncargo --version\nrustfmt --version\ncargo clippy --version\nrust-analyzer --version"
+        },
+        {
+          "kind": "paragraph",
+          "text": "注意一个真实坑：`rust-analyzer` 有时装完工具链却不在组件列表里，运行时会报 `Unknown binary 'rust-analyzer'`。这不是你的编辑器问题，补装一次即可："
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "rustup component add rust-analyzer"
+        },
+        {
+          "kind": "paragraph",
+          "text": "再跑 `rust-analyzer --version`，有版本号输出才算装好。"
+        },
+        {
+          "kind": "heading",
+          "text": "新建工程并写入代码"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo new rust-day01 --bin\ncd rust-day01"
+        },
+        {
+          "kind": "paragraph",
+          "text": "把 `src/main.rs` 换成下面这份完整代码："
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "/// 把名字拼成一句问候语。\nfn greet(name: &str) -> String {\n    format!(\"你好，{}！欢迎来到 Rust。\", name)\n}\n\nfn main() {\n    println!(\"{}\", greet(\"Guo\"));\n    println!(\"Hello, world!\");\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn greet_contains_name() {\n        let s = greet(\"Guo\");\n        assert!(s.contains(\"Guo\"));\n    }\n\n    #[test]\n    fn greet_ends_with_rust() {\n        assert!(greet(\"Guo\").ends_with(\"Rust。\"));\n    }\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "几点说明，只讲今天用得上的："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "`&str` 是「字符串的只读视图」，今天先把它理解成 C 里的 `const char*`：只借来看，不拥有。`String` 则是自己拥有内存、可增长的字符串，类似 C++ 的 `std::string`。两者区别是本周四的正餐，今天先混个脸熟。",
+            "`format!` 和 `println!` 一样是宏，`{}` 是占位符，作用类似 `printf` 的 `%s`，但类型由编译器检查，传错类型直接编译失败。",
+            "`#[cfg(test)]` 的意思是「这段代码只在跑测试时编译」，正式编译出的二进制里没有它。`#[test]` 标记的函数就是测试用例，`cargo test` 会逐个跑它们。这是 Rust 内置的测试机制，不需要 gtest、Catch2 之外的任何第三方库。",
+            "`assert!` 失败时测试会直接报错并打印失败位置，类似 C++ 测试框架里的 `ASSERT_TRUE`。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出："
+        },
+        {
+          "kind": "code",
+          "lang": "text",
+          "code": "你好，Guo！欢迎来到 Rust。\nHello, world!"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo test"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出（关键行）："
+        },
+        {
+          "kind": "code",
+          "lang": "text",
+          "code": "running 2 tests\ntest tests::greet_ends_with_rust ... ok\ntest tests::greet_contains_name ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out"
+        },
+        {
+          "kind": "paragraph",
+          "text": "最后顺手养成两个习惯，两个命令都应该安静无警告："
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo fmt\ncargo clippy -- -D warnings"
+        },
+        {
+          "kind": "paragraph",
+          "text": "`cargo fmt` 会直接改写你的源文件排版；`clippy -- -D warnings` 是把所有警告当错误，逼自己从第一天起写零警告代码——毕业项目验收里也有这一条，现在就开始练。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "不看示例，徒手再建一个工程 `rust-day01-practice`，写一个 `fn add(a: i32, b: i32) -> i32`，在 `main` 里打印 `add(40, 2)` 的结果。",
+            "给 `add` 写两个测试：`add(40, 2) == 42`，以及 `add(-1, 1) == 0`，跑 `cargo test` 全绿。",
+            "故意把其中一个测试的期望值改错（比如改成 43），跑一次 `cargo test`，读一遍失败输出：找到 `FAILED`、失败的测试名、以及 `assertion failed` 后面左右两边的值。这就是明天起你要天天打交道的测试失败读法。",
+            "把期望值改回来，跑 `cargo fmt` 和 `cargo clippy -- -D warnings`，确认两者都安静通过。"
+          ],
+          "verification": "`cargo test` 输出 `2 passed; 0 failed`，且 `cargo clippy -- -D warnings` 无输出（或只输出 Finished，无 warning）。"
+        },
+        {
+          "kind": "callout",
+          "text": "延伸（非必需）：官方免费教材《The Rust Programming Language》第 1-3 章可作今晚的泛读，重点看与 C 的差异点做笔记，不必逐字精读——今天的资料本身已够完成学习。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "`cargo run` 和 `cargo build` 有什么区别？只想编译不想运行该用哪个？",
+          "a": "`cargo run` = 编译 + 运行产物；`cargo build` 只编译不运行。只想编译用 `cargo build`，想看运行结果用 `cargo run`。"
+        },
+        {
+          "q": "`println!` 后面的 `!` 表示什么？如果把它去掉写成 `println(\"hi\")` 会发生什么？",
+          "a": "`!` 表示宏调用。去掉 `!` 后 `println` 会被当成普通函数名，而标准库里没有这个函数，编译报错「找不到函数 println」。宏和函数在 Rust 里是两种东西，不能混写。"
+        },
+        {
+          "q": "为什么 Rust 工程不需要头文件？C 里头文件解决的「前向声明」问题在 Rust 里由什么机制替代？",
+          "a": "Rust 的模块系统由编译器统一解析：`mod` 声明模块归属，`use` 引入名字，编译器自己从源码算出符号表，不需要程序员手写前向声明。头文件在 C 里本质上是「手工维护的符号表」，Rust 把这份工作收进了编译器。"
+        },
+        {
+          "q": "`rust-analyzer` 是编译器吗？如果没有它，`cargo build` 还能正常工作吗？",
+          "a": "不是。它是语言服务器，只服务编辑器（补全、跳转、实时提示）。没有它，`cargo build`、`cargo test` 完全不受影响，只是编辑器里少了智能提示。"
+        },
+        {
+          "q": "（思考题）C 里 `printf(\"%d\", \"abc\")` 是编译通过、运行出错；Rust 里 `println!(\"{}\", 42)` 和 `println!(\"{:?}\", 42)` 有什么区别？哪一个会在编译期就被检查出格式问题？",
+          "a": "`println!(\"{}\", 42)` 用 Display 格式输出 `42`；`println!(\"{:?}\", 42)` 用 Debug 格式输出，也是 `42`（对整数两者看起来一样，对结构体、Vec 等复杂类型差别就大了）。格式串与参数类型不匹配时，Rust 在编译期就报错，不会等到运行。"
+        }
+      ],
+      "checklist": [
+        "五个工具的版本号都能输出：`rustc`、`cargo`、`rustfmt`、`cargo clippy`、`rust-analyzer`（缺 rust-analyzer 时知道用 `rustup component add rust-analyzer` 补装）",
+        "不看示例能说出 `cargo run / build / test / fmt / clippy` 各自是干什么的",
+        "示例工程 `cargo run` 输出两行问候语，`cargo test` 显示 2 passed",
+        "跟练任务的 `add` 工程测试全绿，且 `cargo clippy -- -D warnings` 零警告",
+        "能按「错误代码 → 位置 → 描述 → help 建议」的顺序口头拆解一条 rustc 报错"
+      ]
+    }
+  ]
+}

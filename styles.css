@@ -1,0 +1,226 @@
+/* Rust 自学站：暖纸底 + 铁锈橙 */
+:root {
+  --paper: #faf6ef;
+  --paper-deep: #f3ecdf;
+  --card: #fffdf8;
+  --ink: #2b2118;
+  --ink-soft: #5c4f42;
+  --muted: #8a7a68;
+  --line: #e3d8c6;
+  --rust: #b7410e;
+  --rust-soft: #f6e3d7;
+  --code-bg: #2e211a;
+  --code-ink: #f3e9dc;
+  --ok: #3e7d3a;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  line-height: 1.75;
+  overflow-x: hidden;
+}
+
+.wrap { max-width: 880px; margin: 0 auto; padding: 0 18px; }
+
+h1, h2, h3, .serif {
+  font-family: "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
+  line-height: 1.35;
+}
+
+a { color: var(--rust); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  font-family: "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  font-size: 0.92em;
+  background: var(--paper-deep);
+  border-radius: 5px;
+  padding: 0.08em 0.35em;
+  overflow-wrap: anywhere;
+}
+
+/* 页眉 */
+.site-header {
+  position: sticky; top: 0; z-index: 20;
+  background: rgba(250, 246, 239, 0.94);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.header-inner {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding-top: 10px; padding-bottom: 10px;
+}
+.brand { display: flex; align-items: center; gap: 10px; color: var(--ink); }
+.brand:hover { text-decoration: none; }
+.brand-mark { font-size: 30px; line-height: 1; }
+.brand-text { font-family: "Songti SC", "STSong", "Noto Serif SC", Georgia, serif; font-size: 20px; font-weight: 700; display: flex; flex-direction: column; line-height: 1.2; }
+.brand-text em { font-style: normal; font-family: inherit; font-size: 12px; font-weight: 400; color: var(--muted); letter-spacing: 0.12em; }
+.header-progress { font-size: 13px; color: var(--ink-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 首页 */
+.hero { padding: 34px 0 8px; }
+.hero-day {
+  font-family: "Songti SC", "STSong", "Noto Serif SC", Georgia, serif;
+  font-size: clamp(56px, 14vw, 104px);
+  font-weight: 700; line-height: 1.05; margin: 0; color: var(--ink);
+}
+.hero-day .of { color: var(--muted); font-size: 0.45em; font-weight: 400; }
+.hero-sub { color: var(--ink-soft); margin: 10px 0 0; max-width: 34em; }
+.progress-track {
+  height: 10px; background: var(--paper-deep); border: 1px solid var(--line);
+  border-radius: 99px; overflow: hidden; margin: 22px 0 8px;
+}
+.progress-fill { height: 100%; background: var(--rust); border-radius: 99px; transition: width 0.4s ease; }
+.progress-note { font-size: 13px; color: var(--muted); margin: 0 0 18px; font-variant-numeric: tabular-nums; }
+
+.btn {
+  display: inline-block; border: 1px solid var(--rust); background: var(--rust); color: #fff;
+  padding: 10px 22px; border-radius: 99px; font-size: 15px; cursor: pointer; line-height: 1.4;
+}
+.btn:hover { text-decoration: none; filter: brightness(1.07); }
+.btn.ghost { background: transparent; color: var(--rust); }
+.btn:disabled { opacity: 0.38; cursor: default; filter: none; }
+
+.section-title { font-size: 22px; margin: 36px 0 14px; }
+
+/* 课程卡片 */
+.week-group { margin-bottom: 26px; }
+.week-group h3 { font-size: 17px; margin: 0 0 10px; color: var(--ink-soft); }
+.week-group h3 span { color: var(--muted); font-size: 13px; font-weight: 400; margin-left: 8px; }
+.lesson-card {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 14px 16px; margin-bottom: 10px; color: var(--ink);
+}
+.lesson-card:hover { text-decoration: none; border-color: var(--rust); }
+.lesson-card .day-badge {
+  flex: 0 0 auto; width: 52px; height: 52px; border-radius: 12px;
+  background: var(--rust-soft); color: var(--rust);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
+.lesson-card .day-badge b { font-size: 20px; }
+.lesson-card .day-badge small { font-size: 10px; letter-spacing: 0.08em; }
+.lesson-card .lc-main { flex: 1 1 auto; min-width: 0; }
+.lesson-card .lc-title { font-weight: 700; font-size: 16px; }
+.lesson-card .lc-sum { color: var(--ink-soft); font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.lesson-card .lc-state { flex: 0 0 auto; font-size: 13px; color: var(--ok); white-space: nowrap; }
+.lesson-card .lc-state.todo { color: var(--muted); }
+
+/* 路线图 */
+.roadmap { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.week-card {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.week-card h3 { margin: 0 0 2px; font-size: 17px; }
+.week-card .wk-range { color: var(--muted); font-size: 12.5px; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
+.week-card ul { margin: 6px 0; padding-left: 1.2em; color: var(--ink-soft); font-size: 14px; }
+.week-card .wk-line { font-size: 13.5px; margin: 8px 0 0; color: var(--ink-soft); }
+.week-card .wk-line b { color: var(--rust); font-weight: 600; }
+
+/* 课程页 */
+.lesson-head { padding: 26px 0 4px; }
+.lesson-meta { color: var(--muted); font-size: 13.5px; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+.lesson-head h1 { font-size: clamp(28px, 6.4vw, 40px); margin: 6px 0 8px; }
+.lesson-goal {
+  background: var(--rust-soft); border-radius: var(--radius);
+  padding: 14px 18px; margin: 14px 0 6px; font-size: 15.5px;
+}
+.lesson-goal b { color: var(--rust); }
+.lesson-body h3 { font-size: 21px; margin: 30px 0 8px; }
+.lesson-body p { margin: 10px 0; overflow-wrap: anywhere; }
+.lesson-body ul { padding-left: 1.35em; margin: 10px 0; }
+.lesson-body li { margin: 6px 0; overflow-wrap: anywhere; }
+
+.callout {
+  border-left: 4px solid var(--rust); background: var(--card);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 12px 16px; margin: 16px 0; color: var(--ink-soft);
+}
+
+.table-wrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+table.tt { border-collapse: collapse; width: 100%; min-width: 480px; font-size: 14.5px; }
+table.tt th, table.tt td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.tt tr:last-child td { border-bottom: none; }
+table.tt th { background: var(--paper-deep); font-weight: 600; white-space: nowrap; }
+table.tt td.minutes { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--rust); font-weight: 600; }
+
+/* 代码块 */
+.codeblock { margin: 14px 0; border-radius: var(--radius); overflow: hidden; border: 1px solid #453228; }
+.codeblock-head {
+  display: flex; align-items: center; justify-content: space-between;
+  background: #241812; color: #cbb79f; padding: 6px 12px; font-size: 12.5px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+.copy-btn {
+  background: transparent; border: 1px solid #6b5540; color: #e8dcc8;
+  border-radius: 6px; padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.copy-btn:hover { background: #3a2a1e; }
+.codeblock pre {
+  margin: 0; background: var(--code-bg); color: var(--code-ink);
+  padding: 14px 16px; overflow-x: auto; line-height: 1.6; font-size: 13.5px;
+}
+.codeblock pre code { background: none; padding: 0; font-size: inherit; color: inherit; overflow-wrap: normal; }
+
+/* 跟练 */
+.practice {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 16px 20px 10px; margin: 20px 0;
+}
+.practice h3 { margin-top: 4px; }
+.practice ol { padding-left: 1.4em; }
+.practice li { margin: 8px 0; overflow-wrap: anywhere; }
+.practice .verify { border-top: 1px dashed var(--line); padding-top: 10px; color: var(--ink-soft); font-size: 14.5px; }
+.practice .verify b { color: var(--rust); }
+
+/* 自测 */
+.quiz-item { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 10px; }
+.quiz-item .q { font-weight: 600; margin: 0 0 8px; overflow-wrap: anywhere; }
+.quiz-item .a { display: none; color: var(--ink-soft); margin: 8px 0 2px; border-top: 1px dashed var(--line); padding-top: 10px; overflow-wrap: anywhere; }
+.quiz-item.open .a { display: block; }
+.quiz-toggle { background: none; border: none; color: var(--rust); cursor: pointer; font-size: 14px; padding: 0; }
+
+/* 验收清单 */
+.check-list { list-style: none; padding: 0; margin: 10px 0; }
+.check-list li {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; margin-bottom: 8px;
+}
+.check-list label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.check-list input[type="checkbox"] { margin-top: 6px; width: 17px; height: 17px; accent-color: var(--rust); flex: 0 0 auto; }
+.check-list .done-text { color: var(--muted); text-decoration: line-through; }
+
+.complete-row { margin: 22px 0 6px; display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.complete-note { color: var(--ok); font-size: 14px; }
+
+/* 上一课 / 下一课 */
+.lesson-nav { display: flex; justify-content: space-between; gap: 12px; margin: 34px 0 10px; }
+.lesson-nav .btn { max-width: 48%; text-align: center; overflow-wrap: anywhere; }
+.back-link { display: inline-block; margin-top: 22px; font-size: 14.5px; }
+
+.loading, .error-box { padding: 40px 0; color: var(--ink-soft); }
+.error-box { color: var(--rust); }
+
+/* 页脚 */
+.site-footer { border-top: 1px solid var(--line); margin-top: 48px; padding: 18px 0 30px; color: var(--muted); font-size: 13px; }
+.site-footer code { background: var(--paper-deep); }
+
+@media (max-width: 640px) {
+  .roadmap { grid-template-columns: 1fr; }
+  .header-progress { display: none; }
+  .lesson-card { padding: 12px; gap: 10px; }
+  .lesson-card .day-badge { width: 44px; height: 44px; }
+  .lesson-card .day-badge b { font-size: 17px; }
+  .lesson-nav .btn { padding: 10px 12px; font-size: 14px; }
+  .hero { padding-top: 24px; }
+}
