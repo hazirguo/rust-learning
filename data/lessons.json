@@ -480,6 +480,175 @@
         "跟练任务的 `add` 工程测试全绿，且 `cargo clippy -- -D warnings` 零警告",
         "能按「错误代码 → 位置 → 描述 → help 建议」的顺序口头拆解一条 rustc 报错"
       ]
+    },
+    {
+      "dayNumber": 2,
+      "weekNumber": 1,
+      "title": "所有权、Move 与 Clone",
+      "lessonDate": "2026-10-27",
+      "goal": "说出所有权三条规则，判断一次赋值或传参是 move、Copy 还是 Clone，并读懂 E0382 报错的三种改法",
+      "summary": "每个值只有一个所有者，String 赋值默认是 move 而不是深拷贝，需要独立副本时必须显式 clone",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "核心讲解",
+              "minutes": "25",
+              "detail": "读核心讲解，对照 C/C++ 做笔记，重点是栈与堆、Clone 与 Copy 的区别"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "15",
+              "detail": "敲一遍代码示例，跑通后故意取消一行注释，亲手撞一次 E0382 再改回去"
+            },
+            {
+              "label": "跟练任务",
+              "minutes": "20",
+              "detail": "完成跟练任务，跑通并过 clippy"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "所有权三条规则"
+        },
+        {
+          "kind": "paragraph",
+          "text": "每个值在同一时刻只有一个所有者。值被赋给另一个变量或传给函数时，所有权会转移，除非这个类型实现了 Copy。所有者离开作用域时，值被自动 drop，堆内存随之释放。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C++ 程序员容易把这套规则等同于 RAII，方向是对的，但约束更严：C++ 里 std::string 赋值后两个变量都能用，因为那是一次深拷贝；unique_ptr 移交后继续用旧指针，编译器不管你，运行时才可能出事。Rust 把移交后旧变量还能不能用变成了编译期规则，再用就是编译错误，不用等到运行。"
+        },
+        {
+          "kind": "heading",
+          "text": "栈与堆：move 到底移交了什么"
+        },
+        {
+          "kind": "paragraph",
+          "text": "String 在栈上只占三部分：指向堆缓冲区的指针、当前长度、容量，真正存字符的缓冲区在堆上。i32、bool、char 等固定大小的类型在栈上，赋值时原样复制几个字节，代价小，Rust 允许旧变量继续用，这类类型叫 Copy 类型。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "堆类型赋值时如果也原样复制栈上的指针、长度、容量，两个变量就会指向同一块堆缓冲区，C 里这就是 double free 的配方。Rust 的选择是：不复制堆数据，只把栈上的三件套移交给新变量，同时把旧变量标记为失效。这就是 move。一句话：Copy 是复制一份、各自独立；move 是交出钥匙、旧的作废。move 本身不复制堆数据，所以很便宜。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "C++ 默认赋值对 std::string 是深拷贝，需要显式 std::move 才变成移动；Rust 默认赋值对堆类型就是 move，不需要显式写 move",
+            "C++ 里 move 之后继续用源对象，编译器不管你；Rust 里 move 之后继续用源变量，编译器直接拒收",
+            "这个默认值正好反过来，是从 C++ 转过来最容易踩的坑"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "Clone：显式深拷贝"
+        },
+        {
+          "kind": "paragraph",
+          "text": "确实需要两个各自独立的 String 时，显式调用 .clone()，堆缓冲区也复制一份，两者互不影响。Copy 是隐式的、按位复制的、只用于栈上小数据；Clone 是显式的、可能很贵的、可以用于任何需要深拷贝的类型。String、Vec 都实现了 Clone 但没有实现 Copy，所以 let s2 = s1; 是 move，想复制必须写出 .clone()。"
+        },
+        {
+          "kind": "callout",
+          "text": "满屏 clone 通常是所有权设计错了：很多地方其实该用借用（明天讲）或调整函数签名，而不是靠复制硬撑。深拷贝可能是 O(n) 的操作，Rust 要求你把它写出来，让代价在代码里可见。"
+        },
+        {
+          "kind": "heading",
+          "text": "函数参数与返回值"
+        },
+        {
+          "kind": "paragraph",
+          "text": "把 String 传给函数等于把所有权交给函数，调用方在调用后不能再用它，除非函数把它返回回来。把 i32 传给函数则不受影响，因为 i32 是 Copy。函数返回一个值，等于把所有权交还给调用方。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "函数其实只需要读一读：明天学借用，改成传 &String 或 &str",
+            "调用方后面确实还要用、且两个副本互不影响：调用前 .clone() 一份传进去",
+            "调用方后面要用处理后的结果：让函数返回它，调用方接住返回值"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "Drop 与 E0382 的读法"
+        },
+        {
+          "kind": "paragraph",
+          "text": "所有者离开作用域时 Rust 自动调用 drop 释放堆内存，没有 free、delete 可写，也就不存在 double free、use-after-free。move 不等于释放：let s2 = s1; 之后堆缓冲区没有被释放，只是换了主人，真正释放发生在 s2 离开作用域时。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "取消示例里 println! 注释后会报 E0382：borrow of moved value。读法是：value moved here 指着 let s2 = s1; 那一行，所有权在这里交出；value borrowed here after move 指着试图再用 s1 的那一行；最后的 help 建议 clone，但要不要采纳取决于你是不是真的需要两个副本，如果只是读一读，等明天学借用才是更便宜的改法。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "fn takes_and_returns(s: String) -> String {\n    println!(\"函数里拿到：{}\", s);\n    s\n}\n\nfn main() {\n    let x = 42;\n    let y = x;\n    println!(\"Copy: x = {}, y = {}\", x, y);\n\n    let s1 = String::from(\"hello\");\n    let s2 = s1;\n    // println!(\"{}\", s1); // 取消注释会报 E0382：s1 已被 move\n    println!(\"move 后：s2 = {}\", s2);\n\n    let s3 = String::from(\"hello\");\n    let s4 = s3.clone();\n    println!(\"clone 后：s3 = {}, s4 = {}\", s3, s4);\n\n    let s5 = String::from(\"world\");\n    let s6 = takes_and_returns(s5);\n    println!(\"拿回所有权后：s6 = {}\", s6);\n\n    {\n        let s7 = String::from(\"临时\");\n        println!(\"作用域内：{}\", s7);\n    }\n    println!(\"作用域已结束，s7 不可用（也不用 free）\");\n}",
+          "caption": "已在本机验证：cargo run、cargo clippy -- -D warnings、cargo fmt --check 全部通过（rustc 1.99.1）"
+        },
+        {
+          "kind": "paragraph",
+          "text": "新建工程：cargo new rust-day02 --bin，替换 src/main.rs 后运行 cargo run。"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run",
+          "caption": "预期输出"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Copy: x = 42, y = 42；move 后：s2 = hello；clone 后：s3 = hello, s4 = hello；函数里拿到：world；拿回所有权后：s6 = world；作用域内：临时；作用域已结束，s7 不可用（也不用 free）。"
+        },
+        {
+          "kind": "callout",
+          "text": "故意撞一次报错：把 println! 那行的注释去掉再跑 cargo run，确认看到 E0382，并指出 move 行与再用行，然后把注释加回去。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "新建工程 rust-day02-practice，写函数 fn append_exclaim(s: String) -> String，在传入字符串末尾加一个 ! 后返回（提示：String 有 push_str 方法）",
+            "在 main 里：let a = String::from(\"rust\")，调用 append_exclaim(a) 得到 b 并打印；然后故意再打印一次 a，确认报 E0382；把那行打印删掉，程序恢复正常",
+            "再写一段：let c = String::from(\"rust\")，let d = c.clone()，分别打印 c 和 d 确认两者都能用；把 d 传给 append_exclaim 得到 e，打印 c 和 e，确认 c 还在、e 加了感叹号",
+            "预测题（先写答案再跑）：let n = 10; let m = n; 之后 n 还能用吗？let v = vec![1, 2, 3]; let w = v; 之后 v 还能用吗？写下判断，再用两行代码验证"
+          ],
+          "verification": "跟练工程 cargo run 正常输出，且 cargo clippy -- -D warnings 零警告；能不查资料说出第 4 题两个答案不同的原因（i32 是 Copy，Vec 不是）"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "let s2 = s1; 之后 s1 还能用吗？这取决于 s1 是什么类型？分别举一个能用和不能用的例子。",
+          "a": "取决于类型。s1 是 i32、bool 等 Copy 类型时能用（赋值是复制）；s1 是 String、Vec 等非 Copy 类型时不能用（赋值是 move，所有权已交出）。"
+        },
+        {
+          "q": "C++ 里 std::string a = b; 之后 a、b 都能用，Rust 里 let s2 = s1;（s1 是 String）之后 s1 不能用，这个默认值差异的根本原因是什么？",
+          "a": "C++ 默认赋值是深拷贝，代价藏在赋值语句里；Rust 默认赋值对堆类型是 move，只移交栈上的指针、长度、容量，不复制堆数据，避免了看起来便宜、实际很贵的隐式深拷贝，也避免了两个变量指向同一块堆内存带来的 double free。代价是程序员必须显式决定什么时候深拷贝（clone）。"
+        },
+        {
+          "q": "clone() 和 Copy 有什么区别？为什么 Rust 要求深拷贝必须显式写出来？",
+          "a": "Copy 是隐式按位复制，只用于栈上小数据，赋值后旧变量照常用；Clone 是显式深拷贝，可以很贵，必须写出 .clone()。显式的要求是为了让深拷贝的代价在代码里可见，而不是藏在一次不起眼的赋值后面。"
+        },
+        {
+          "q": "函数 fn f(s: String) 被调用后，调用方还能用原来的变量吗？如果调用方后面还要用它，有哪三种改法，分别适合什么场景？",
+          "a": "不能用，所有权已交给函数。三种改法：函数只读就改成借用（明天讲，传 &String 或 &str）；调用方确实要留一份就调用前 .clone()；调用方要用处理后的结果就让函数返回它，调用方接住返回值。"
+        },
+        {
+          "q": "（思考题）let s2 = s1; 之后堆上的字符数据被复制了吗？什么时候它才真正被释放？把 move 理解成释放会在哪里误导你？",
+          "a": "没有复制，堆数据原地不动，只是栈上的指针、长度、容量交给了 s2。真正释放发生在 s2 离开作用域、自动 drop 时。把 move 理解成释放，会误判数据还在不在：move 后数据还在，只是换了主人；只有主人的作用域结束，数据才消失。"
+        }
+      ],
+      "checklist": [
+        "能不查书说出所有权三条规则，并用交钥匙讲清 move 与 Copy 的区别",
+        "示例工程跑通预期输出，并亲手撞过一次 E0382、能指出 move 行与再用行",
+        "跟练工程跑通，cargo clippy -- -D warnings 零警告，能解释 i32 与 Vec 赋值后旧变量可用性不同的原因",
+        "能说出 Clone 与 Copy 的区别，以及满屏 clone 是设计信号这句话的意思",
+        "能说出函数拿走所有权后的三种改法，并判断今天哪个场景该用哪种"
+      ]
     }
   ]
 }
