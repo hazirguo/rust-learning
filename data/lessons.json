@@ -809,6 +809,151 @@
         "跟练工程跑通，cargo clippy -- -D warnings 零警告，能说出函数只读参数为什么优先写 &str",
         "能说出悬垂引用的危险和 E0106 的改法（返回有所有权的值）"
       ]
+    },
+    {
+      "dayNumber": 4,
+      "weekNumber": 1,
+      "title": "Slice 类型与 String vs &str",
+      "lessonDate": "2026-10-29",
+      "goal": "说清切片是什么、分清 String 与 &str 的身份和适用场景，并写出参数是 &str 和 &[T] 的通用函数。",
+      "summary": "切片是不拥有、不复制数据的视图（胖指针：指针加长度）；String 是有所有权的堆上字符串，&str 是借来的只读视图；函数参数写 &str 和 &[T] 最通用；字符串切片按字节切，必须落在字符边界上，返回切片比返回下标更安全。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读核心讲解，对照 C/C++ 做笔记，重点是切片的含义、String 与 &str 的差别、返回切片的安全性三节",
+              "label": "核心讲解",
+              "minutes": "25"
+            },
+            {
+              "detail": "敲一遍代码示例，跑通后故意撞一次 UTF-8 边界 panic，再撞一次切片场景的 E0502，读完再改回去",
+              "label": "代码验证",
+              "minutes": "15"
+            },
+            {
+              "detail": "完成跟练，跑通并过 clippy",
+              "label": "跟练任务",
+              "minutes": "20"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. 切片：一块连续数据的视图，不拥有、不复制"
+        },
+        {
+          "kind": "paragraph",
+          "text": "切片是对一段连续数据开的一扇窗：不拥有数据，不复制数据，只记录起点和长度。&[T] 是元素切片，&str 是字符串切片，它们在底层是胖指针：一个指向数据的指针加一个长度。C 里的指针加长度是你自己约定的，传错长度、越界、悬空都得靠自己保证；Rust 把长度绑在类型里，越界会在运行时 panic，悬空则在编译期就被借用检查拦下。C 字符串以 \\0 结尾、靠扫描找结尾，Rust 的 &str 不靠终止符，长度就是它的一部分，但内容必须是合法的 UTF-8。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "切片语法是一组范围表达式：&v[1..4] 是下标 1 到 3（左闭右开），&v[..3] 是从头到 3，&v[2..] 是从 2 到结尾，&v[..] 是整段，..= 是闭区间。拿到切片不等于拿到数据副本，&nums[1..4] 没有复制那几个数，只是让调用方能通过这扇窗看到它们。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. String 与 &str：一个是主人，一个是借来的视图"
+        },
+        {
+          "items": [
+            "String：有所有权的字符串，数据存在堆上，可增长、可修改，变量离开作用域就被 drop。",
+            "&str：借来的字符串视图，不拥有数据，长度固定，通过它本身改不了内容；字符串字面量本身就是 &str，也可以从 String 上切一段得到。",
+            "从 String 到 &str 是免费的：&s 会通过解引用强制转换变成 &str，不复制、不分配。",
+            "从 &str 到 String 是要花钱的：to_owned 或 to_string 会复制一份堆上数据，值得付代价的时候是需要长期持有、带出作用域、或者要修改它，短暂读一读就别复制。",
+            "str（不带 &）本身是没有固定大小的类型，不能直接当变量类型用，日常写的一定是 &str。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "callout",
+          "text": "常见误解：&str 本身不能改内容，想改就去改它背后的 String，或者复制一份 String 出来再改；let s2 = s1 对 String 是 move，对 &str 是 Copy，因为复制的只是指针加长度这个视图，不是数据。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 函数参数写切片类型，不要写容器类型"
+        },
+        {
+          "kind": "paragraph",
+          "text": "求和函数参数写 &[i32]，不要写 &Vec<i32>：前者能接数组的切片、Vec 的切片、整段、其中一段；后者只能接 Vec。字符串函数参数写 &str，不要写 &String：前者能接字面量和 String，后者只能接 String，clippy 的 ptr_arg lint 会直接提醒你改。原则是：函数只依赖一段连续数据，就不要把数据的容器写进签名，签名越通用，函数越好复用。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 字符串切片按字节切，但必须落在字符边界上"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rust 字符串是 UTF-8 编码：ASCII 字符占 1 个字节，汉字通常占 3 个字节。String::len 返回字节数，不是字符个数；chars().count 才是字符个数。示例里你好，世界字节长度是 15，字符个数是 5。&s[..3] 切的是字节范围，切在字符边界上没问题，切在字符中间就 panic，而且是运行时 panic，不是编译错误：&\"你好\"[..2] 会报 byte index 2 is not a char boundary（已实测）。编译器拦不住它，因为字符串内容要运行时才知道。不确定边界时别直接按数字切，用 chars、char_indices、split、trim 这类按字符语义操作的方法，或者先用 is_char_boundary 判断一下再切。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 返回切片比返回下标更安全：借用检查器替你盯着原数据"
+        },
+        {
+          "kind": "paragraph",
+          "text": "first_word 返回下标时，调用方拿到下标后如果先 s.clear() 再用下标去切，原字符串已经空了，编译器不会拦你。返回 &str 切片时，切片借用了 s，只要切片还活着，s 就不能被可变借用，clear 会直接报 E0502：immutable borrow occurs here 指着 first_word(&s) 那一行，mutable borrow occurs here 指着 s.clear()，immutable borrow later used here 指着最后打印 word 的那一行。改法有两种：先把 word 用完再 clear（靠 NLL 让借用提前结束，示例第 2 段就是这么做的），或者干脆不要在切片活着的时候改原数据。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机用 cargo 实际跑通过：cargo run、cargo clippy -- -D warnings、cargo fmt --check 三项全部通过（rustc 1.99.1）。先 cargo new rust-day04 --bin，再把 src/main.rs 换成下面这份完整代码。注意 first_word 最后的返回分支写的是 s 而不是 &s[..]，因为 clippy 的 redundant_slicing lint 会提醒你整段切片就是原值本身。"
+        },
+        {
+          "caption": "第 4 天示例：String 与 &str、数组与 Vec 切片、UTF-8 边界",
+          "code": "fn first_word(s: &str) -> &str {\n    let bytes = s.as_bytes();\n    for (i, &item) in bytes.iter().enumerate() {\n        if item == b' ' {\n            return &s[..i];\n        }\n    }\n    s\n}\n\nfn greet(name: &str) {\n    println!(\"你好，{}！\", name);\n}\n\nfn sum_slice(nums: &[i32]) -> i32 {\n    nums.iter().sum()\n}\n\nfn main() {\n    // 1. String 是有所有权的堆上字符串，&str 是借来的视图\n    let owned = String::from(\"hello world\");\n    let literal: &str = \"hello world\";\n    println!(\"String：{}，&str 字面量：{}\", owned, literal);\n    // &String 会自动解引用强制转换成 &str，所以 greet 两种都能接\n    greet(&owned);\n    greet(literal);\n    greet(\"直接传字面量也行\");\n\n    // 2. 切片：不复制，只记录起点和长度\n    let word = first_word(&owned);\n    println!(\"第一个词是：{}\", word);\n    // word 在这里之后不再被使用，它的借用已经结束，\n    // 所以下面 clear 才是合法的（NLL，第 3 天的结论在这里又出现一次）\n    let mut owned2 = owned;\n    owned2.clear();\n    println!(\"切片用完后才能 clear：'{}'\", owned2);\n\n    // 3. 数组和 Vec 的切片：函数参数写 &[i32]，比写 &Vec<i32> 更通用\n    let nums = vec![10, 20, 30, 40, 50];\n    println!(\"全部求和：{}\", sum_slice(&nums));\n    println!(\"中间一段求和：{}\", sum_slice(&nums[1..4]));\n    let arr = [1, 2, 3, 4];\n    println!(\"数组切片求和：{}\", sum_slice(&arr[..2]));\n\n    // 4. 字符串切片按字节切，但必须落在字符边界上\n    let cn = String::from(\"你好，世界\");\n    println!(\"字节长度：{}，字符个数：{}\", cn.len(), cn.chars().count());\n    println!(\"前一个汉字：{}\", &cn[..3]);\n    println!(\"去掉第一个汉字：{}\", &cn[3..]);\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行 cargo run 的预期输出：String：hello world，&str 字面量：hello world；三行你好问候（分别来自 String 的借用、字面量、直接传字面量）；第一个词是：hello；切片用完后才能 clear：''；全部求和：150；中间一段求和：90；数组切片求和：3；字节长度：15，字符个数：5；前一个汉字：你；去掉第一个汉字：好，世界。然后故意撞两次：&\"你好\"[..2] 的运行时 panic 和第 5 节的 E0502，读完再改回去，最后 cargo fmt 与 cargo clippy -- -D warnings 都应该安静通过。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "新建工程 rust-day04-practice，写两个函数：fn second_word(s: &str) -> &str（返回第二个词，没有第二个词时返回空字符串 \"\"，提示：用 split 按空格切，或仿照 first_word 找两个空格的位置）和 fn sum_slice(nums: &[i32]) -> i32。",
+            "在 main 里：用 second_word 处理 \"hello rust world\"，打印确认是 rust；用 sum_slice 分别对一个 Vec 的整段和中间一段求和并打印；再写一个 greet 函数（参数 &str），分别传 String 的借用和字面量调用一次，确认两种都能接。",
+            "故意撞一次 E0502：拿到 second_word 的切片后，先 clear 原字符串、再打印切片，确认报错；然后把打印移到 clear 之前，让程序恢复正常，并用 NLL 解释为什么这一次合法。",
+            "预测题（先写答案再跑）：let s = String::from(\"你好世界\");，&s[..3]、&s[..6]、&s[..4] 三个切片里，哪几个合法、哪几个 panic？为什么？再动手验证你的预测。"
+          ],
+          "verification": "跟练工程 cargo run 正常输出，且 cargo clippy -- -D warnings 零警告；能不查资料说出预测题的答案（前两个合法，分别是你、你好；第三个 panic，因为字节下标 4 落在一个汉字中间），并说出函数参数为什么优先写 &str 和 &[T]。"
+        }
+      ],
+      "quiz": [
+        {
+          "a": "切片是对一段连续数据的视图，不拥有数据、不复制数据，只记录起点和长度（胖指针：指针加长度）。&nums[1..4] 没有复制那三个数，只是让调用方能通过这扇窗看到它们。",
+          "q": "切片是什么？它拥有数据吗？&nums[1..4] 有没有复制 20、30、40 这三个数？"
+        },
+        {
+          "a": "String 是有所有权的堆上字符串，可增长、可修改；&str 是借来的只读视图，不拥有数据。从 String 到 &str 是解引用强制转换，免费不复制；从 &str 到 String 要用 to_owned 或 to_string 复制一份，值得付代价的时候是需要长期持有、带出作用域、或者要修改它的时候，短暂读一读就别复制。",
+          "q": "String 与 &str 各自的身份是什么？从 String 到 &str 要不要复制？从 &str 到 String 呢，什么时候值得付这份复制代价？"
+        },
+        {
+          "a": "因为 &str 能接字面量和 String 的借用，&[i32] 能接数组和 Vec 的整段与其中一段，签名只写真正需要的能力，复用面最广。写 &String 时 clippy 的 ptr_arg lint 会建议改成 &str。",
+          "q": "为什么函数只读字符串时参数优先写 &str、只读一组数时参数优先写 &[i32]，而不是 &String、&Vec<i32>？clippy 对此有什么提醒？"
+        },
+        {
+          "a": "len 返回字节数，不是字符个数。UTF-8 里汉字通常占 3 个字节，你好，世界 5 个字符共 15 个字节，所以 len 是 15。&\"你好\"[..2] 切在汉字中间，编译器在编译期不知道字符串内容、算不出边界，只能在运行时检查并 panic。",
+          "q": "String::len() 返回的是什么？你好，世界 的 len 是 15、字符个数是 5，为什么不一样？&\"你好\"[..2] 为什么是运行时 panic 而不是编译错误？"
+        },
+        {
+          "a": "返回 &str 更安全。返回下标时，调用方 clear 原字符串后下标还在，编译器不会拦，运行时才会出错；返回切片时，切片借用了原字符串，只要切片还活着，原字符串就不能被可变借用，clear 会直接报 E0502，bug 在编译期就暴露了。",
+          "q": "（思考题）first_word 返回下标和返回 &str 切片，哪个更安全？为什么返回切片能让先 clear 再用旧结果这类 bug 在编译期就暴露？"
+        }
+      ],
+      "checklist": [
+        "能不查书说清切片的含义（视图、不拥有、不复制、胖指针），并说出 String 与 &str 的身份差别和互相转换的代价",
+        "示例工程跑通预期输出，并亲手撞过一次 UTF-8 边界 panic、一次切片场景的 E0502，能说出两者一个是运行时、一个是编译期的原因",
+        "能解释函数参数为什么优先写 &str 和 &[T]，并写出一个两种调用方都能接的函数",
+        "跟练工程跑通，cargo clippy -- -D warnings 零警告，能预测中文字符串切片的合法边界",
+        "能用返回切片比返回下标更安全讲清借用检查器是怎么替程序员盯着原数据的"
+      ]
     }
   ]
 }
