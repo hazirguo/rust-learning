@@ -954,6 +954,126 @@
         "跟练工程跑通，cargo clippy -- -D warnings 零警告，能预测中文字符串切片的合法边界",
         "能用返回切片比返回下标更安全讲清借用检查器是怎么替程序员盯着原数据的"
       ]
+    },
+    {
+      "dayNumber": 5,
+      "weekNumber": 1,
+      "title": "struct 与方法",
+      "lessonDate": "2026-10-30",
+      "goal": "能用 struct + 方法为 /proc 进程信息建模，并说清方法接收者与字段 move 的含义",
+      "summary": "struct 把松散字段收成一个类型，方法挂在 impl 上，关联函数负责构造，结构体更新语法遇到 String 字段会部分 move。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "核心讲解",
+              "minutes": "25",
+              "detail": "读核心讲解，对照 C/C++ 做笔记，重点是方法接收者与结构体更新语法"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "15",
+              "detail": "敲一遍示例并跑通，再验证改名后 proc 仍可用、改 pid 后整体使用报错"
+            },
+            {
+              "label": "跟练任务",
+              "minutes": "20",
+              "detail": "完成跟练，跑通并过 clippy"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解：struct、方法与关联函数"
+        },
+        {
+          "kind": "paragraph",
+          "text": "struct 把一组本来就该在一起的数据收成一个具名类型。散着写 pid、名字、状态，调用方很容易把两个进程的字段拼错，编译器也拦不住；收成 ProcInfo 后，类型本身就保证了这组字段属于同一个进程。相比 C 的 struct，Rust 的方法不在 struct 体内，而挂在 impl 块里；字段默认私有，跨模块需要 pub；没有继承，复用靠组合和 trait。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "关联函数没有 self，用 类型::函数() 调用，如 ProcInfo::load()，相当于 C++ 的静态工厂函数。",
+            "&self 是只读借用，调用后实例还能用；&mut self 是可变借用，可以改字段；self 是拿走所有权，调用后实例不能再用。",
+            "方法调用时编译器自动借用：proc.summary() 里 summary 要 &self，编译器自动替你取 &proc。",
+            "调试先加 #[derive(Debug)]；Display 是给最终用户看的输出，需要手动实现，示例里 Display 复用了 summary。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解：构造与解析分开，结构体更新语法的 move"
+        },
+        {
+          "kind": "paragraph",
+          "text": "示例把 load（读 /proc/self/status）和 from_status（解析一段文本）拆开：前者只读文件，后者是纯函数。拆开后解析逻辑可以用写死文本直接测试，不依赖真实环境；后面做读 /proc 的极简 top 项目时，这个套路会原样复用。解析手法：split_once(':') 按第一个冒号切，trim 去制表符和空格，parse 转数字，VmRSS 先取数字部分再解析，失败返回 Err 而不是 unwrap 硬撑。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "结构体更新语法 ProcInfo { name: 新值, ..proc } 的意思是其余字段从 proc 拿。本例被替换的是 name 本身，其余字段全是 Copy 类型，所以 proc 仍可整体使用（已实测）。反过来写 ProcInfo { pid: 999, ..proc } 时，name 是 String，会被 move 走，此后 proc 不能再整体使用，编译器报 value used after move；但没被 move 的 Copy 字段仍可单独访问，如 proc.pid 合法——这叫部分 move。"
+        },
+        {
+          "kind": "callout",
+          "text": "容易踩的坑：实例化必须把每个字段都给值，漏一个就报 missing field；&self 方法里不能改字段，想改字段接收者必须是 &mut self，且调用处变量本身也得是 mut；方法名和字段名可以同名，proc.threads 是字段，proc.threads() 是方法，括号不能丢。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机用 cargo 实际跑通过：cargo run、cargo clippy -- -D warnings 全部通过。先 cargo new rust-day05 --bin，再把 src/main.rs 换成下面这份完整代码。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "use std::fmt;\nuse std::fs;\n\n// 进程信息：字段全部是自有数据，struct 拥有它们，不借用临时字符串。\n#[derive(Debug)]\nstruct ProcInfo {\n    pid: u32,\n    ppid: u32,\n    name: String,\n    state: char,\n    threads: u32,\n    vm_rss_kb: u64,\n}\n\nimpl ProcInfo {\n    // 关联函数：没有 self，像 C++ 的静态工厂函数，用 ProcInfo::load() 调用。\n    fn load() -> Result<Self, String> {\n        let text = fs::read_to_string(\"/proc/self/status\")\n            .map_err(|e| format!(\"读 /proc/self/status 失败：{e}\"))?;\n        Self::from_status(&text)\n    }\n\n    // 纯解析函数：输入是借用 &str，输出是自有 ProcInfo，所有权在这里交接。\n    fn from_status(text: &str) -> Result<Self, String> {\n        let mut name = String::new();\n        let mut state = '?';\n        let mut pid = 0;\n        let mut ppid = 0;\n        let mut threads = 0;\n        let mut vm_rss_kb = 0;\n\n        for line in text.lines() {\n            // 每行形如 \"Name:\\tmyprog\"，按冒号切一次，右边 trim。\n            let Some((key, value)) = line.split_once(':') else {\n                continue;\n            };\n            let value = value.trim();\n            match key {\n                \"Name\" => name = value.to_string(),\n                \"State\" => state = value.chars().next().unwrap_or('?'),\n                \"Pid\" => pid = value.parse().map_err(|_| \"Pid 解析失败\")?,\n                \"PPid\" => ppid = value.parse().map_err(|_| \"PPid 解析失败\")?,\n                \"Threads\" => threads = value.parse().map_err(|_| \"Threads 解析失败\")?,\n                \"VmRSS\" => {\n                    // \"12345 kB\"：先取数字部分再解析。\n                    let num = value.split_whitespace().next().unwrap_or(\"0\");\n                    vm_rss_kb = num.parse().map_err(|_| \"VmRSS 解析失败\")?;\n                }\n                _ => {}\n            }\n        }\n        if name.is_empty() || pid == 0 {\n            return Err(\"status 里缺少 Name 或 Pid\".to_string());\n        }\n        Ok(Self { pid, ppid, name, state, threads, vm_rss_kb })\n    }\n\n    // 方法：&self 只读借用，不拿走所有权，调用后 proc 还能继续用。\n    fn summary(&self) -> String {\n        format!(\n            \"{} (pid={}, ppid={}, state={}, threads={}, rss={:.1} MiB)\",\n            self.name, self.pid, self.ppid, self.state, self.threads,\n            self.rss_mib()\n        )\n    }\n\n    fn rss_mib(&self) -> f64 {\n        self.vm_rss_kb as f64 / 1024.0\n    }\n\n    fn is_multithreaded(&self) -> bool {\n        self.threads > 1\n    }\n}\n\nimpl fmt::Display for ProcInfo {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        write!(f, \"{}\", self.summary())\n    }\n}\n\nfn main() {\n    match ProcInfo::load() {\n        Ok(proc) => {\n            println!(\"{proc}\");\n            println!(\"多线程进程吗？{}\", proc.is_multithreaded());\n            // 结构体更新语法：只改一个字段，其余从原值 copy/move 过来。\n            // 本例被替换的是 name 本身，其余字段全是 Copy 类型，所以 proc 仍可整体使用；\n            // 若改的是 pid，name（String）会被 move 走，proc 就不能再整体使用。\n            let renamed = ProcInfo { name: \"renamed-demo\".to_string(), ..proc };\n            println!(\"改名后：{}\", renamed.summary());\n        }\n        Err(e) => eprintln!(\"加载进程信息失败：{e}\"),\n    }\n\n    // 一段写死的 status 文本，验证解析逻辑不依赖真实 /proc。\n    let sample = \"Name:\\tdemo\\nState:\\tR (running)\\nPid:\\t1234\\nPPid:\\t100\\nThreads:\\t3\\nVmRSS:\\t20480 kB\\n\";\n    let parsed = ProcInfo::from_status(sample).expect(\"示例文本应能解析\");\n    assert_eq!(parsed.pid, 1234);\n    assert_eq!(parsed.threads, 3);\n    println!(\"示例解析通过：{}\", parsed.summary());\n}\n",
+          "caption": "完整示例：struct + impl + /proc/self/status 解析，已 cargo run 与 clippy 验证"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run。预期输出（pid、ppid、rss 随实际运行环境变化，结构和示例解析行不变）：rust-day05 (pid=3927, ppid=3925, state=R, threads=1, rss=2.1 MiB)；多线程进程吗？false；改名后：renamed-demo (pid=3927, ppid=3925, state=R, threads=1, rss=2.1 MiB)；示例解析通过：demo (pid=1234, ppid=100, state=R, threads=3, rss=20.0 MiB)。最后跑 cargo fmt 与 cargo clippy -- -D warnings，两者都应安静通过。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "新建工程 rust-day05-practice，把示例的 ProcInfo 连同 from_status 一起搬过去，再加两个方法：is_running(&self) -> bool（state 为 'R' 时为真）和 set_name(&mut self, name: &str)（注意接收者和调用处变量的 mut）。",
+            "在 main 里用写死文本解析出一个 ProcInfo，打印 summary；调用 is_running 打印结果；把变量声明为 mut，调用 set_name 改名后再打印一次，确认改名生效。",
+            "故意撞一次 move：写 let changed = ProcInfo { pid: 999, ..parsed }; 再整体用 parsed，确认报 value used after move 并指出 move 点和事后使用点；再试单独访问 parsed.pid，确认它合法；最后把整体使用删掉或改成用 changed，让程序恢复正常。",
+            "预测题（先写答案再跑）：let a = ProcInfo { .. } 之后，let b = a; 再 println!(\"{:?}\", a); 会怎样？为什么？如果 struct 里全是 Copy 字段，结果会变吗？"
+          ],
+          "verification": "跟练工程 cargo run 正常输出，且 cargo clippy -- -D warnings 零警告；能不查资料说出第 3 题报错的两行各指什么，并说出第 4 题的答案（有 String 字段时 b = a 是 move，a 不能再用；全是 Copy 字段时 b = a 是复制，a 还能用）。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "struct 是什么？它和 C 的 struct 相比，最关键的差别在哪里？",
+          "a": "struct 是把一组相关字段打包成的具名类型。相比 C 的 struct，Rust 的方法不是写在 struct 体内，而是挂在 impl 块里；字段默认私有，跨模块需要 pub；没有继承，复用靠组合和 trait。"
+        },
+        {
+          "q": "关联函数和方法怎么区分？ProcInfo::load() 和 proc.summary() 的调用方式为什么不一样？",
+          "a": "看第一个参数有没有 self：没有就是关联函数，用 类型::函数() 调用；有就是方法，用 实例.方法() 调用。load 负责构造、不依赖某个实例，所以是关联函数；summary 读某个实例的字段，所以是方法。"
+        },
+        {
+          "q": "&self、&mut self、self 三种接收者各是什么意思？一个只读方法如果误写成 &mut self，会在什么场景下被借用检查拦住？",
+          "a": "&self 是只读借用，调用后实例还能用；&mut self 是可变借用，可以改字段，同一时间只能有一个；self 是拿走所有权，调用后实例不能再用。只读方法误写成 &mut self 时，只要在它借用活着期间还有别的借用（比如同时打印实例），就会报可变与不可变借用冲突。"
+        },
+        {
+          "q": "结构体更新语法 ..proc 在什么情况下会 move 掉原值？本例改 name 时为什么没有 move 掉 name，改 pid 时为什么会？",
+          "a": "当 .. 搬运的字段里有 String 这类非 Copy 类型时，那个字段会被 move，原值不能再整体使用。本例改 name 时，新值替换了 name 字段，..proc 只搬了其余 Copy 字段，所以没有 move；改 pid 时，name 字段要从 proc 搬过来，String 被 move 走，proc 就不能再整体使用了，但未被 move 的 Copy 字段仍可单独访问。"
+        },
+        {
+          "q": "为什么示例要把 load（读文件）和 from_status（解析文本）拆成两个函数？这个拆法对后面做「读 /proc 的极简 top」项目有什么好处？",
+          "a": "拆开后解析变成纯函数：给什么文本、返回什么结果，不依赖真实文件，测试可以直接用写死文本验证。做极简 top 时，同样的解析函数可以接真实 /proc 文件，也可以接测试文本，数据源和解析逻辑互不拖累，改一处不用动另一处。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清 struct 的定义方式、字段初始化简写，以及关联函数与方法的区分标准（看有没有 self）",
+        "能说清 &self、&mut self、self 三种接收者的区别，并写出一个只读方法和一个可变方法",
+        "示例工程跑通预期输出，并亲手撞过一次字段 move 报错，能指出 move 点和事后使用点",
+        "跟练工程跑通，cargo clippy -- -D warnings 零警告，能解释为什么拆分 load 与 from_status 更利于测试",
+        "能用 struct 给 /proc 进程信息建模，并说出下一步（第 2 周错误处理、第 7 周系统编程）会在这个例子上加什么"
+      ]
     }
   ]
 }
