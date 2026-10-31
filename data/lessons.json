@@ -1074,6 +1074,168 @@
         "跟练工程跑通，cargo clippy -- -D warnings 零警告，能解释为什么拆分 load 与 from_status 更利于测试",
         "能用 struct 给 /proc 进程信息建模，并说出下一步（第 2 周错误处理、第 7 周系统编程）会在这个例子上加什么"
       ]
+    },
+    {
+      "dayNumber": 6,
+      "weekNumber": 1,
+      "title": "第一周复盘：借用检查错误笔记",
+      "lessonDate": "2026-10-31",
+      "goal": "能读懂并修掉本周最常见的借用检查报错，并整理出一份自己的错误笔记",
+      "summary": "借用检查报错不是惩罚而是定位：先找借用起点、冲突点和所有权转移点，再按缩短借用、换所有权、改数据结构三条路修。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "本周主线回顾",
+              "minutes": "10",
+              "detail": "把第 2-5 天的规则收成一句话：一个值一个主人，借用期间主人不能动"
+            },
+            {
+              "label": "报错读法与修法",
+              "minutes": "20",
+              "detail": "对照五类报错编号读三段式报错，先预测编号再动手撞一次"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "10",
+              "detail": "敲一遍示例并跑通预期输出，再跑 clippy"
+            },
+            {
+              "label": "跟练与整理笔记",
+              "minutes": "20",
+              "detail": "逐段修掉三段反例，写出至少 5 条错误笔记，自测题自查"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解：本周其实只讲了一条规则"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 2 天到第 5 天看起来是四个话题，其实是同一条规则在不同地方露面：一个值在同一时刻只有一个主人；借用期间，主人不能动这份数据；借用结束，主人才恢复自由。move 是主人换人，借用冲突是借用期间主人想动数据，切片是借用的一种，struct 更新语法里的部分 move 是只换了其中几个字段的主人。复盘时不要按天背，要按所有权在谁手里、借用活到哪里这两个问题去套每一道报错。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C/C++ 的对照：C 里 move 之后再用是悬垂指针或 double free，运行时才炸；C++ 里一个引用在读、另一个指针在改同样危险，只是编译器不替你查，靠测试和 sanitizer 事后发现。Rust 把这两类错误提前到了编译时，报错就是提前的定位信息。"
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解：报错的三段读法"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第一段看编号与一句话结论，如 E0502 cannot borrow as mutable because it is also borrowed as immutable，编号是检索词，结论告诉你冲突类型。第二段看箭头指向的两处位置：借用或 move 发生的地方，和你事后又想用的地方，两点之间就是所有权或借用的生命周期。第三段看 note 与 help：note 解释编译器怎么算出这段借用，help 只是候选修法，最常建议 clone，但 clone 只是再复制一份绕开所有权问题，在热路径或大数据上会掩盖设计问题，先想清要借用、复制还是交出所有权再决定。"
+        },
+        {
+          "kind": "callout",
+          "text": "两个常见误解：借用检查器不是运行时检查，也不是垃圾回收，它只在编译时证明不存在悬垂和数据竞争的写法；加生命周期标注并不能让数据活得更久，标注只是把引用至少活多久这个事实告诉编译器，数据寿命由它的主人决定。"
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解：本周五类报错速查（编号均已实测）"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "E0382 borrow of moved value：值已被 move 走，事后又想用，如 let _t = s; 之后 println!(\"{s}\")。修法：事后还要用就传 &s 借用，或在 move 前 clone，或接受 move、事后改用新主人。",
+            "E0502 cannot borrow as mutable because it is also borrowed as immutable：只读借用还活着就去可变操作，如 r = &v[0] 后 v.push(3)。Vec 扩容可能重新分配整块内存，原引用会悬垂，所以必须拦。修法：把只读借用收进块里，借用结束后再 push，或先把 v[0] 这种 Copy 值复制出来。",
+            "E0499 cannot borrow as mutable more than once：同一时间两个可变借用，如两次 &mut v。修法：串行使用，先用完一个再借下一个；本周不要用 unsafe 或 RefCell 绕过去。",
+            "E0505 cannot move out because it is borrowed：东西还被借着就想 move 走，如 r 借着 v[0] 时 v.into_iter()。修法：先结束借用再 move，或改成按索引借用、按需复制。",
+            "E0597 borrowed value does not live long enough：被借的东西死得比引用早，如块内 let x，块外 r = &x。修法：把 x 挪到外层让数据活得和引用一样久，或返回自有值而不是引用。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解：修报错的三条路，按顺序试"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "1. 缩短借用：把使用收进块里、用完就丢、先把 Copy 值复制出来、把计算提前。借用活到最后一次使用为止，不活到变量作用域结束。",
+            "2. 换所有权：只读就传 &str；要长期持有就返回 String 这种自有值；确实需要两份才 clone，并先问复制代价谁在付。",
+            "3. 改数据结构：冲突反复出现往往是结构问题，先拆函数、拆字段、拆步骤；RefCell、Rc、unsafe 是第 3 周和第 7 周才出场的工具，本周不要提前绕路。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机用 cargo 实际跑通过：cargo run、cargo clippy -- -D warnings、cargo fmt --check 三项全部通过。先 cargo new rust-day06 --bin，再把 src/main.rs 换成下面这份完整代码。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "fn print_name(name: &str) {\n    println!(\"name: {name}\");\n}\n\nfn make_greeting(who: &str) -> String {\n    format!(\"hello, {who}\")\n}\n\nfn main() {\n    // 1. move 的修法：不需要拿走所有权时，传 &str 借用，原值还能继续用。\n    let name = String::from(\"demo-process\");\n    print_name(&name);\n    println!(\"after borrow: {name}\");\n\n    // 2. 借用冲突的修法：把只读借用的使用收进一个块里，借用结束后再可变操作。\n    let mut nums = vec![10, 20, 30];\n    {\n        let first = &nums[0];\n        println!(\"first: {first}\");\n    } // first 的借用在这里结束\n    nums.push(40);\n    println!(\"after push: {nums:?}\");\n\n    // 3. 悬垂的修法：不能返回指向局部变量的引用，返回自有的 String。\n    let owned = make_greeting(\"world\");\n    println!(\"{owned}\");\n\n    // 4. 先把需要的值复制出来，再做可变操作，也是一种缩短借用的办法。\n    let mut scores = vec![80, 90];\n    let first_score = scores[0]; // i32 是 Copy，复制出来就不欠借用\n    scores.push(100);\n    println!(\"first_score: {first_score}, scores: {scores:?}\");\n}",
+          "caption": "可运行示例：四种修法各一段，输出确定、与环境无关"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "// E0382：s 已经被 move 给 _t，事后又想用 s。\nlet s = String::from(\"hi\");\nlet _t = s;\nprintln!(\"{s}\");\n\n// E0502：r 还借着 v，就去 push 改 v。\nlet mut v = vec![1, 2];\nlet r = &v[0];\nv.push(3);\nprintln!(\"{r}\");\n\n// E0597：x 在内层块结束时释放，r 指向已释放的数据。\nlet r;\n{\n    let x = String::from(\"hi\");\n    r = &x;\n}\nprintln!(\"{r}\");",
+          "caption": "反例：下面三段会编译失败，不要放进可运行工程，只用来对照读报错"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run；再跑 cargo clippy -- -D warnings 和 cargo fmt --check，三项都应安静通过。"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run\ncargo clippy -- -D warnings\ncargo fmt --check",
+          "caption": "运行与检查命令"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出：name: demo-process / after borrow: demo-process / first: 10 / after push: [10, 20, 30, 40] / hello, world / first_score: 80, scores: [80, 90, 100]。然后故意验证一次：删掉示例第 2 段的块括号，让 first 的借用活到 println! 之后，看编译器是不是报 E0502 并指着 push 那一行；读完再把块括号加回去。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "新建工程 rust-day06-practice，把三段反例逐段粘进去、逐段修掉：E0382 改成传 &s 借用；E0502 改成块作用域或先复制 v[0]；E0597 把 x 挪到块外或改成返回自有值。每修一段先写下预测编号，再跑编译验证。",
+            "用第 5 天的 ProcInfo 练一次部分 move：写 let changed = ProcInfo { pid: 999, ..parsed };，分别试整体使用 parsed 和单独访问 parsed.pid，确认前者报错、后者合法，并把这条写进笔记（编号 E0382，备注部分 move）。",
+            "写你的借用检查错误笔记：表格形式，至少 5 条，覆盖 E0382、E0502、E0499、E0505、E0597 或部分 move 中的 5 个。每条含触发代码（3 行以内）、报错读法、修法和一句话自己的话；写完盖住修法列自考。",
+            "预告明天：第 7 天集中清 Rustlings 第一周相关组（move_semantics、references、strings 等），先列出还没清完的组名；同时把第 2-5 天示例工程各跑一遍 cargo clippy -- -D warnings，有警告的记下来明天一起修。"
+          ],
+          "verification": "跟练工程 cargo run 正常输出且 cargo clippy -- -D warnings 零警告；笔记至少 5 条，每条能说清主人是谁、借用活到哪里；能不查资料说出 E0382 与 E0502 的区别（前者是所有权已转移、事后又用；后者是只读借用还活着、就去可变借用）。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "error[E0382] 和 error[E0502] 各在说什么？各举一个本周学过的触发写法。",
+          "a": "E0382 是值已被 move 走、事后又想用，如 let _t = s; 之后 println!(\"{s}\")。E0502 是只读借用还活着、就去可变借用，如 r = &v[0] 后 v.push(3)。前者是所有权问题，后者是借用冲突问题。"
+        },
+        {
+          "q": "为什么 let r = &v[0]; v.push(3); println!(\"{r}\"); 通不过？只说不能同时可变和不可变借用不够，还要说出 Vec 扩容会带来什么危险。",
+          "a": "因为 r 借着 v 的第一个元素，而 push 可能触发 Vec 重新分配整块内存，旧内存被释放后 r 就成了悬垂引用。借用检查器拦的不是 push 这个动作，而是借用活着期间改变被借数据的布局。"
+        },
+        {
+          "q": "下面的写法为什么通不过，两种修法各是什么？let r; { let x = String::from(\"hi\"); r = &x; } println!(\"{r}\");",
+          "a": "通不过，编号 E0597：x 在块结束时释放，r 活得比 x 久。修法一：把 x 声明挪到块外，让数据活得和 r 一样久；修法二：不返回引用，返回自有的 String，让数据跟随新主人走。"
+        },
+        {
+          "q": "编译器 help 建议你加 .clone() 时，什么时候应该接受、什么时候不该接受？各给一个判断标准。",
+          "a": "应该接受：确实需要两份独立数据，且复制代价可接受，如小字符串、低频配置解析。不该接受：复制只是为了绕开借用冲突，且数据量大或在热路径上，或者本该用借用、缩短借用、改结构解决——这时 clone 会掩盖设计问题。"
+        },
+        {
+          "q": "let changed = ProcInfo { pid: 999, ..parsed }; 之后，整体使用 parsed 会怎样、单独访问 parsed.pid 会怎样？为什么两者结果不一样？",
+          "a": "整体使用 parsed 会报 E0382，因为 name 字段（String）已被 ..parsed move 走，这是部分 move；单独访问 parsed.pid 合法，因为 pid 是 u32、Copy 类型，没有被 move，仍在原地。部分 move 只拿走被搬的那几个字段，不是整把废掉变量。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清本周一条主线：一个值一个主人，借用期间主人不能动，借用结束主人才恢复自由",
+        "能按三段读法读报错：编号与结论、move/借用两处位置、note 与 help（help 只是候选修法）",
+        "示例工程跑通预期输出，并亲手撞过一次 E0502（删块括号版），能指出冲突的两行",
+        "借用检查错误笔记至少 5 条，每条含触发代码、读法、修法和一句话自己的话",
+        "能说出修报错的三条路（缩短借用、换所有权、改数据结构）并按顺序选，不一律加 clone"
+      ]
     }
   ]
 }
