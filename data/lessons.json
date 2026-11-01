@@ -1236,6 +1236,191 @@
         "借用检查错误笔记至少 5 条，每条含触发代码、读法、修法和一句话自己的话",
         "能说出修报错的三条路（缩短借用、换所有权、改数据结构）并按顺序选，不一律加 clone"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读核心讲解第 1 节，把第 2-6 天收成一张对照表",
+              "label": "第一周主线速查",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "按第 2 节的刷法清掉剩余组，只看报错、不先看答案",
+              "label": "Rustlings 清关",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "读第 3 节，亲手撞一次 needless_range_loop，再修掉",
+              "label": "clippy 实战",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），做跟练与自测题",
+              "label": "代码验证与自测",
+              "minutes": "20 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. 第一周主线速查：五天其实是同一条规则的五种露面"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 6 天已经收过一次，这里再压成一张验收对照表——自查时盖住右列，看着左列能不能说出右列。"
+        },
+        {
+          "items": [
+            "第 2 天 move：一个值同一时刻只有一个主人。let b = a; 之后 a 不能再用。C 语言里这一步什么都不拦，之后再用 a 是悬垂指针或 double free，运行时才炸；Rust 提前到编译时拦。",
+            "第 3 天借用：不可变借用可以多个，可变借用只能一个，两者不能共存。C++ 里「一个引用在读、另一个指针在改」同样危险，只是编译器不替你查，靠测试和 sanitizer 事后发现。",
+            "第 4 天 Slice 与 &str：切片也是一种借用。切片活着时，原字符串不能被改、不能被 move 走，否则切片指向的内存就变了。&str 是借来的视图，String 是自有的数据，函数参数优先用 &str。",
+            "第 5 天 struct 与方法：&self 的方法只借用，&mut self 的方法可变借用；..proc 搬走 String 字段是部分 move，没被搬的 Copy 字段还能单独用，整体不能再用。",
+            "第 6 天报错读法：编号与结论、move/借用两处位置、note 与 help。help 只是候选修法，最常建议 clone，但 clone 只是「再复制一份绕开所有权问题」，先问清到底要借用、要复制，还是要交出所有权。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "paragraph",
+          "text": "一个自查句式，贯穿整周：这份数据的主人是谁？借用从哪一行开始、到哪一行结束？三问都答得出，才算真懂；答不出，代码即使编译通过，下次换个写法还会撞同一堵墙。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. Rustlings 怎么刷才算数：先读报错，再改代码"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rustlings 第一周相关组就是清单里点过名的那些：variables、functions、move_semantics、references、strings、primitive_types。清关的标准不是「跑完」，而是每一道题都能说清它在练哪条规则。"
+        },
+        {
+          "items": [
+            "刷法：先读题目给出的编译报错（或测试失败），自己先预测修法，再改代码。改完能跑通后，停下来想一句：这道题如果不改，会报哪个编号、哪两行在冲突。说不出来就等于没刷。",
+            "不要先看答案：Rustlings 的提示是按步骤给的，先看提示再改，等于跳过了「读报错」这个第一周最核心的技能。第 6 天练的是读法，今天就是用这个读法实战。",
+            "卡住超过 15 分钟的处理：先把题目收进一张「卡点清单」，只写题名和卡在哪一行，不要死磕；今天的跟练第 3 步就是整理这张清单。卡点清单比全对更有用——它就是下周复习的靶子，也是第 6 天那份错误笔记的续篇。",
+            "验收线：variables、functions、move_semantics、references、strings、primitive_types 六组全部通过（rustlings verify 不再报未完成），且卡点清单上的每一项都能说出对应的规则。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "3. clippy 是什么：借用检查器不管的事，它管"
+        },
+        {
+          "kind": "paragraph",
+          "text": "借用检查器只证明「不存在悬垂和数据竞争的写法」，它不管你的写法是不是啰嗦、是不是容易错。clippy 就是补这一块的官方 lint 工具，地位相当于 C/C++ 世界的 -Wall -Wextra 再加上 clang-tidy 的一部分：编译能过，但写法有更优解或常见坑时，它会出警告。"
+        },
+        {
+          "items": [
+            "跑法：cargo clippy 只看警告；cargo clippy -- -D warnings 是把警告当错误，零警告才算过。本周开始就养成后者——项目 1 到毕业项目，清单里的验收句都是「clippy 零警告」，早立规矩比后期返工便宜。",
+            "警告的三段读法，和第 6 天读借用报错同款：lint 名（例如 clippy::needless_range_loop）、为什么不好（只用下标访问元素，不如直接迭代）、建议修法（改成 for item in &v）。lint 名就是检索词，拿到它就能去 clippy 官网查完整说明。",
+            "实测例子：for i in 0..v.len() { println!(\"{}\", v[i]); } 会同时触发两个警告：needless_range_loop（循环变量只用来取下标，不如直接迭代）和 useless_vec（这个例子里 vec 只被迭代，用数组 [10, 20, 30] 就够）。修法是改成 for item in &v { println!(\"{item}\"); }。注意：警告不等于编译错误，代码本来就能跑；clippy 指出的是「能跑但写得别扭」。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "callout",
+          "text": "两个常见误解要先拆掉：第一，#[allow(...)] 不是修法，是「我看过这条警告且有理由保留原写法」的声明，本周不要用它蒙过去；第二，cargo fmt 和 clippy 是两回事——fmt 只管格式（缩进、换行），clippy 管写法，今天的示例就是先 cargo fmt 修了一处 struct 字面量的换行，才通过 cargo fmt --check，而 clippy 全程零警告。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 今天不做的事：不提前学第 2 周的内容"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 2 周是 enum、模式匹配、错误处理、泛型与 trait。今天如果 Rustlings 提前刷到 enums 或 error_handling 组，看到不懂的题先跳过、记进卡点清单，不要今天就开新课。周日验收课的任务是「把第一周收干净」，不是「把第二周提前学完」。清单第一周的验收句只有一句：不查书能解释 move / 借用 / 切片，能预测简单代码是否通过借用检查——对照它自查，达标就收工。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑。"
+        },
+        {
+          "caption": "新建工程",
+          "code": "cargo new rust-day07 --bin\ncd rust-day07",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "src/main.rs 完整代码",
+          "code": "/// 第一周验收：move、借用、切片、struct 各练一次，且一次通过 clippy。\nstruct ProcInfo {\n    pid: u32,\n    name: String,\n}\n\nimpl ProcInfo {\n    fn summary(&self) -> String {\n        format!(\"{} ({})\", self.name, self.pid)\n    }\n\n    fn rename(&mut self, new_name: &str) {\n        self.name.clear();\n        self.name.push_str(new_name);\n    }\n}\n\n/// 返回第一个单词的切片：只借用，不拿所有权。\nfn first_word(s: &str) -> &str {\n    s.split_whitespace().next().unwrap_or(\"\")\n}\n\n/// 对切片求和：参数是 &[i32]，调用方保留所有权。\nfn total(scores: &[i32]) -> i32 {\n    scores.iter().sum()\n}\n\nfn main() {\n    // 1. move 与借用：summary 只借用，rename 可变借用，之后原值还能用。\n    let mut proc = ProcInfo {\n        pid: 1234,\n        name: String::from(\"demo-process\"),\n    };\n    println!(\"before: {}\", proc.summary());\n    proc.rename(\"renamed-process\");\n    println!(\"after: {}\", proc.summary());\n\n    // 2. 切片：first_word 返回 &str，借用活到最后一次使用为止。\n    let line = String::from(\"hello rust world\");\n    let word = first_word(&line);\n    println!(\"first word: {word}\");\n    println!(\"full line still usable: {line}\");\n\n    // 3. 借用结束后再改：块作用域收束只读借用，再 push。\n    let mut nums = vec![10, 20, 30];\n    {\n        let first = &nums[0];\n        println!(\"first: {first}\");\n    }\n    nums.push(40);\n    println!(\"total: {}, nums: {nums:?}\", total(&nums));\n\n    // 4. 部分 move：name 被搬走，pid 是 Copy 还能单独用。\n    let moved = proc.name;\n    println!(\"moved name: {moved}, pid still here: {}\", proc.pid);\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn first_word_picks_first_token() {\n        assert_eq!(first_word(\"hello rust\"), \"hello\");\n        assert_eq!(first_word(\"\"), \"\");\n    }\n\n    #[test]\n    fn total_sums_slice() {\n        assert_eq!(total(&[10, 20, 30]), 60);\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "运行方法：四项全部通过才算验收过关",
+          "code": "cargo run\ncargo test\ncargo clippy -- -D warnings\ncargo fmt --check",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出（确定性输出，与环境无关）：before: demo-process (1234)；after: renamed-process (1234)；first word: hello；full line still usable: hello rust world；first: 10；total: 100, nums: [10, 20, 30, 40]；moved name: renamed-process, pid still here: 1234。cargo test 应报告 2 passed；cargo clippy -- -D warnings 与 cargo fmt --check 应静默通过（无输出即通过）。"
+        },
+        {
+          "kind": "heading",
+          "text": "亲手撞一次 clippy 警告（对照用，不要放进验收工程）"
+        },
+        {
+          "caption": "会触发 clippy 警告的写法",
+          "code": "fn main() {\n    let v = vec![10, 20, 30];\n    for i in 0..v.len() {\n        println!(\"{}\", v[i]);\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "实测警告（节选）：warning: the loop variable `i` is only used to index `v`，lint 名 clippy::needless_range_loop，建议改成 for <item> in &v；另有一条 clippy::useless_vec，建议这个例子直接用数组。修掉的方法：改成 for item in &v { println!(\"{item}\"); }，再跑 cargo clippy -- -D warnings 确认零警告。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "Rustlings 清关：跑 rustlings verify，把 variables、functions、move_semantics、references、strings、primitive_types 六组里剩余的题清完；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。",
+            "clippy 清关：把第 2-5 天的示例工程各跑一遍 cargo clippy -- -D warnings 和 cargo fmt --check；有警告的按 lint 名逐条修掉，不用 #[allow] 蒙过去；修完后把警告名和修法各记一条进错误笔记。",
+            "整理卡点清单：列出今天仍卡住的题或概念（题名 + 卡在哪一行 + 对应的规则猜测），不超过 10 条；卡点清单就是下周复习的靶子，也是第 6 天错误笔记的续篇。",
+            "一周自查：不查书回答——move 之后原变量为什么不能用？&str 和 String 在函数参数里该优先用哪个？..proc 搬走 String 字段后整体还能不能用、单个 Copy 字段呢？三问全对才算通过清单第一周的验收句。"
+          ],
+          "verification": "Rustlings 六组全部通过；第 2-5 天示例工程与今天的验收工程 cargo clippy -- -D warnings 零警告、cargo fmt --check 通过；cargo test 2 passed；能不查书写出卡点清单并说清每条对应的规则。"
+        }
+      ],
+      "checklist": [
+        "Rustlings 第一周六组（variables、functions、move_semantics、references、strings、primitive_types）全部通过",
+        "第 2-5 天示例工程与今天的验收工程 cargo clippy -- -D warnings 零警告，cargo fmt --check 通过",
+        "验收工程 cargo run 输出与预期一致，cargo test 2 passed",
+        "能不查书说清 move / 借用 / 切片三条规则，并预测简单代码是否通过借用检查",
+        "整理出卡点清单（不超过 10 条），每条能说出对应的规则猜测"
+      ],
+      "dayNumber": 7,
+      "goal": "把第一周 Rustlings 相关组清完、示例工程 clippy 零警告，并对照清单验收句完成第一周自查。",
+      "lessonDate": "2026-11-01",
+      "quiz": [
+        {
+          "a": "借用检查器是编译器的一部分，证明「不存在悬垂和数据竞争的写法」，是正确性底线；clippy 是官方 lint，指出「能跑但写得别扭或容易错」的地方，是写法质量。-D warnings 把警告当错误，是自己给自己立规矩：清单里从项目 1 到毕业项目的验收都是 clippy 零警告，早立规矩比后期返工便宜。",
+          "q": "借用检查器和 clippy 分工有什么不同？为什么 cargo clippy -- -D warnings 要作为每周的固定验收项？"
+        },
+        {
+          "a": "clippy::needless_range_loop：循环变量只用来取下标，不如直接迭代，修法 for item in &v；clippy::useless_vec：这个例子里 vec 只被迭代，用数组 [10, 20, 30] 就够。两者都是「能跑但没必要绕一圈」。",
+          "q": "for i in 0..v.len() { println!(\"{}\", v[i]); } 触发了哪两个 clippy 警告？各是什么意思，修法是什么？"
+        },
+        {
+          "a": "不能。fmt 只管格式（缩进、换行、括号位置），不管写法优劣；clippy 管写法，不管格式。反过来也不行：clippy 零警告的代码完全可能格式不规范（例如今天示例最初的 struct 字面量一行过长，clippy 通过但 fmt 报错）。两者是互补的两道关，都要过。",
+          "q": "cargo fmt --check 通过了，能不能说明代码没有 clippy 警告？反过来呢？为什么？"
+        },
+        {
+          "a": "先记进卡点清单（题名 + 卡在哪一行），跳过去继续清其他题。死磕会把验收课拖成单题课；直接看答案跳过了「读报错」这个第一周最核心的技能。卡点清单就是下周复习的靶子，比全对更有用。",
+          "q": "Rustlings 一道题卡住超过 15 分钟，按今天的刷法应该怎么处理？为什么不建议死磕或直接看答案？"
+        },
+        {
+          "a": "整体使用 parsed 会报 E0382，因为 name 字段（String）已被 ..parsed move 走，这是部分 move；单独访问 parsed.pid 合法，因为 pid 是 u32、Copy 类型，没有被 move。部分 move 只拿走被搬的那几个字段，不是整把废掉变量。",
+          "q": "不查书回答：let changed = ProcInfo { pid: 999, ..parsed }; 之后，整体使用 parsed 会怎样、单独访问 parsed.pid 会怎样？这属于 move、借用还是部分 move？"
+        }
+      ],
+      "summary": "周日验收课：用 Rustlings 清关、clippy 实战和一周自测把所有权、借用、切片、struct 四块收干净，第一周正式收尾。",
+      "title": "第一周验收：Rustlings 清关与 clippy 零警告",
+      "weekNumber": 1
     }
   ]
 }
