@@ -1421,6 +1421,160 @@
       "summary": "周日验收课：用 Rustlings 清关、clippy 实战和一周自测把所有权、借用、切片、struct 四块收干净，第一周正式收尾。",
       "title": "第一周验收：Rustlings 清关与 clippy 零警告",
       "weekNumber": 1
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "带数据的变体、Option 本质上就是一个 enum",
+              "label": "概念：enum 与 C 枚举的差别",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "编译器如何逼你处理所有情况，match 守卫的写法",
+              "label": "核心：match 穷尽性与守卫",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "图形面积示例，改几个值看输出变化",
+              "label": "代码：跟读并运行示例",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "给日志级别写 enum 加解析函数，见跟练步骤",
+              "label": "跟练任务",
+              "minutes": "20 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "C 的 enum 只有名字，Rust 的 enum 还能带数据"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C/C++ 里枚举值就是整数，附加信息要靠另外的结构体或 switch 外挂。Rust 的每个变体都可以自带不同类型、不同数量的数据。这在系统代码里随处可见：Firecracker 的设备配置、virtio 的队列描述符类型，都是“一个值、多种形态”的场景，Rust 不用再写“类型字段 + union + 手动判断”的三件套，编译器直接保证你拆包时拿到的数据类型是对的。"
+        },
+        {
+          "items": [
+            "常见误解：以为 Rust 的 enum 和 C 一样只是整数别名。恰恰相反，Rust enum 在内存里是“判别标签 + 数据”的组合，变体间大小按最大的那个对齐；不要拿它去和 C 的 enum 做数值比较或位运算。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "Option 就是标准库里的一个 enum，Result 也是"
+        },
+        {
+          "kind": "paragraph",
+          "text": "enum Option<T> { None, Some(T) }。这就是第 1 周讲“没有 null”的底气：空值不是一个特殊指针，而是一个必须显式匹配的变体。Result<T, E> 同理，只有 Ok(T) 和 Err(E) 两个变体。第 10 天讲错误处理时，? 运算符本质上就是对这个 enum 的语法糖。"
+        },
+        {
+          "kind": "heading",
+          "text": "match 必须穷尽：编译器替你检查“漏了哪种情况”"
+        },
+        {
+          "items": [
+            "每个变体都得有分支，否则编译报错（non-exhaustive patterns），这是它和 C switch 最大的不同：C 的 switch 漏 case 只会悄悄 fallthrough 或走 default，Rust 直接不让编译。",
+            "分支按顺序尝试，第一个匹配的胜出；可以用 if 守卫再加条件，例如 Shape::Circle(r) if *r > 10.0。",
+            "读报错的技巧：编译器报 non-exhaustive patterns 时会把你漏掉的模式原样列出来，照抄补一个分支往往就是正确修复，不要图省事一上来就写 _ => {} 把检查关掉——通配分支会吞掉以后新增变体时的提醒。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "if let：只关心一种情况时的简写"
+        },
+        {
+          "kind": "paragraph",
+          "text": "当你只想处理 Some 而对 None 不感兴趣时，写完整 match 是啰嗦的。注意两点：一是 if let 里的 = 是模式匹配，不是赋值比较；二是它同样可以带 else。如果两个分支都要认真处理，或者匹配结果要当作值返回，优先用 match；只关心一种情况时用 if let，代码意图更清晰。"
+        },
+        {
+          "kind": "heading",
+          "text": "match 是表达式"
+        },
+        {
+          "kind": "paragraph",
+          "text": "match 的每个分支可以返回值，整个 match 本身就能出现在赋值号右边。各分支的返回值类型必须一致，否则编译器会报类型不匹配——这也是把逻辑错误提前到编译期的同一类机制。"
+        },
+        {
+          "kind": "callout",
+          "text": "重要提醒：不要一上来就用通配分支 _ 把穷尽检查关掉。以后给 enum 新增变体时，穷尽检查是提醒你补分支的最后一道防线。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "caption": "把代码存为 cargo 工程的 src/main.rs，运行 cargo run",
+          "code": "// Day 8: enum 与模式匹配 —— 带数据的枚举 + match 穷尽性\nenum Shape {\n    Circle(f64),\n    Rect { width: f64, height: f64 },\n    Unit, // 不带数据的变体，和 C 的枚举值最像\n}\n\nimpl Shape {\n    fn area(&self) -> f64 {\n        match self {\n            Shape::Circle(r) => std::f64::consts::PI * r * r,\n            Shape::Rect { width, height } => width * height,\n            Shape::Unit => 0.0,\n        }\n    }\n\n    fn describe(&self) -> String {\n        match self {\n            Shape::Circle(r) if *r > 10.0 => format!(\"大圆，半径 {r}\"),\n            Shape::Circle(r) => format!(\"小圆，半径 {r}\"),\n            Shape::Rect { width, height } => format!(\"矩形 {width} x {height}\"),\n            Shape::Unit => \"单位图形\".to_string(),\n        }\n    }\n}\n\nfn first_char(s: &str) -> Option<char> {\n    s.chars().next()\n}\n\nfn main() {\n    let shapes = vec![\n        Shape::Circle(2.0),\n        Shape::Rect { width: 3.0, height: 4.0 },\n        Shape::Circle(20.0),\n        Shape::Unit,\n    ];\n    for s in &shapes {\n        println!(\"{}，面积 {:.2}\", s.describe(), s.area());\n    }\n\n    // Option 的两种处理方式：match 穷尽，if let 只关心一种情况\n    match first_char(\"rust\") {\n        Some(c) => println!(\"首字符是 {c}\"),\n        None => println!(\"空字符串\"),\n    }\n    if let Some(c) = first_char(\"\") {\n        println!(\"首字符是 {c}\");\n    } else {\n        println!(\"空字符串，没有首字符\");\n    }\n\n    // match 的值也可以直接作为表达式结果\n    let n = 2;\n    let word = match n {\n        0 => \"零\",\n        1 => \"一\",\n        2 => \"二\",\n        _ => \"很多\",\n    };\n    println!(\"{n} 读作 {word}\");\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出（已在本机 cargo run 验证通过）：小圆，半径 2，面积 12.57；矩形 3 x 4，面积 12.00；大圆，半径 20，面积 1256.64；单位图形，面积 0.00；首字符是 r；空字符串，没有首字符；2 读作 二。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "再动手改两个值验证理解：把 Circle(20.0) 改成 Circle(5.0)，应看到“小圆”；删掉 Shape::Unit 分支重新编译，看编译器如何报 non-exhaustive。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务（30 分钟内完成）"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "定义一个日志级别 enum：enum Level { Error, Warn, Info, Debug }，再加一个带数据的变体 Custom(String)。",
+            "写一个函数 fn parse_level(s: &str) -> Option<Level>：输入 error / warn / info / debug 返回对应变体，其他字符串返回 None；约定以 custom: 开头的字符串返回 Custom 变体（去掉前缀后的内容作为数据）。",
+            "用 match 写一个函数 fn level_rank(level: &Level) -> u8：Error=0、Warn=1、Info=2、Debug=3、Custom 一律返回 99；再用 if let 写一段只处理 Custom 变体的打印逻辑。",
+            "在 main 里对 [\"error\", \"info\", \"custom:trace\", \"bogus\"] 逐个解析并打印结果。"
+          ],
+          "verification": "cargo run 输出中 bogus 一行应明确显示解析失败（None），其余三行分别对应正确级别；再跑 cargo clippy，零警告。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸阅读（官方免费资源）：The Rust Programming Language 第 6 章（枚举与模式匹配），第 18 章前两节（模式语法与守卫）。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清 Rust enum 与 C enum 的区别：变体可带数据、类型由编译器保证",
+        "能解释 match 穷尽性规则，并读懂 non-exhaustive patterns 报错",
+        "示例代码在本机 cargo run 通过，并动手改值验证了守卫分支与穷尽检查",
+        "跟练任务完成：Level enum 解析与分级函数跑通，clippy 零警告",
+        "自测题 5 道全部能说出要点"
+      ],
+      "dayNumber": 8,
+      "goal": "理解 Rust 的 enum 是带数据的标签，能用 match 做穷尽匹配，并用 if let 处理只关心一种情况的 Option。",
+      "lessonDate": "2026-11-02",
+      "quiz": [
+        {
+          "a": "Rust 变体可以各自携带不同类型的数据，且类型由编译器在拆包时强制检查；C 里 union 的数据解释全靠程序员手写判断，一旦类型字段和实际写入不一致就是未定义行为，Rust 把这层检查收进了类型系统。",
+          "q": "Rust 的 enum 变体和 C 的枚举值最关键的区别是什么？为什么说这个区别能避免 C 里 union + 类型字段的常见 bug？"
+        },
+        {
+          "a": "编译不过：match 不穷尽，漏了 Color::Blue 分支。编译器报 non-exhaustive patterns，并列出缺失的模式 Color::Blue；补上分支或加通配分支 _ 才能通过（推荐补具体分支）。",
+          "q": "下面代码为什么编译不过？编译器会给出什么提示？enum Color { Red, Green, Blue }；fn name(c: Color) -> &'static str { match c { Color::Red => \"红\", Color::Green => \"绿\" } }"
+        },
+        {
+          "a": "只关心一种情况、其他情况处理很简单（或不需要处理）时用 if let，意图更清晰；两个分支都要认真处理、或匹配结果要作为值返回、或要处理多个变体时用 match。",
+          "q": "if let Some(x) = opt 和完整 match 处理 Option，在什么情况下应该优先选 if let，什么情况下必须用 match？"
+        },
+        {
+          "a": "因为 match 的是 &self，模式绑定得到的是 &f64，比较需要解引用；去掉 * 会把 &f64 和 f64 比较，类型不匹配而编译失败。",
+          "q": "match 守卫 Shape::Circle(r) if *r > 10.0 中，为什么 r 前面要加 *？如果去掉会发生什么？"
+        },
+        {
+          "a": "编译失败，报类型不匹配。典型例子：一个分支返回字符串、另一个分支不小心返回数字，说明两个分支的语义根本不是同一类结果，编译器在你运行前就拦住了。",
+          "q": "match 作为表达式时，各分支返回值类型不一致会怎样？举一个你会因此发现的真实逻辑错误。"
+        }
+      ],
+      "summary": "C 的枚举只有名字，Rust 的枚举每个变体都能带数据；match 必须穷尽，编译器替你检查漏掉的情况，Option 本质上就是一个 enum。",
+      "title": "enum 与模式匹配",
+      "weekNumber": 2
     }
   ]
 }
