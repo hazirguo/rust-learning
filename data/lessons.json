@@ -1575,6 +1575,157 @@
       "summary": "C 的枚举只有名字，Rust 的枚举每个变体都能带数据；match 必须穷尽，编译器替你检查漏掉的情况，Option 本质上就是一个 enum。",
       "title": "enum 与模式匹配",
       "weekNumber": 2
+    },
+    {
+      "dayNumber": 9,
+      "weekNumber": 2,
+      "title": "集合类型：Vec、String 与 HashMap",
+      "lessonDate": "2026-11-03",
+      "goal": "掌握三种常用集合的所有权用法，能用 HashMap 做计数、用 Vec 收集结果，为周六的日志分析 CLI 项目打底。",
+      "summary": "Vec 是堆上可增长数组、String 是 UTF-8 可增长文本、HashMap 用 entry API 一次完成查改；索引越界会 panic、get 返回 Option，HashMap 遍历需自己排序才稳定。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "概念：三种集合与 C++ 对照",
+              "minutes": "10 分钟",
+              "detail": "Vec 对应 vector、String 对应 string、HashMap 对应 unordered_map，但所有权规则不同"
+            },
+            {
+              "label": "核心：Vec 与 String 的所有权细节",
+              "minutes": "15 分钟",
+              "detail": "索引与 get 的区别、push 与移动、字节数与字符数的区别"
+            },
+            {
+              "label": "代码：跟读并运行示例",
+              "minutes": "15 分钟",
+              "detail": "日志级别计数示例，改输入看输出变化"
+            },
+            {
+              "label": "跟练任务",
+              "minutes": "20 分钟",
+              "detail": "写一个按词频统计的小程序，见下方练习"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. Vec 是堆上可增长数组，但元素移动受所有权约束"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C++ 的 std::vector<T> 和 Rust 的 Vec<T> 用途几乎一一对应：连续内存、可增长、按索引访问。差别在所有权上：Rust 里 vec.push(value) 是把 value 的所有权移进 Vec，之后再用原变量就会报 use of moved value。这是第 2 天 move 规则在集合上的直接应用，不是新规则。事先知道大概规模时用 Vec::with_capacity(n) 预留容量，避免反复扩容搬运，这和 C++ 的 reserve 是同一个优化意图。"
+        },
+        {
+          "kind": "callout",
+          "text": "v[i] 越界会直接 panic；v.get(i) 返回 Option<&T>，把“可能不存在”交给你处理。下标来自外部输入（日志行号、用户参数、网络数据）时，优先用 get。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. String 是可增长的 UTF-8 文本，不是字符数组"
+        },
+        {
+          "kind": "paragraph",
+          "text": "push_str 追加的是借用，不拿走参数的所有权；format! 则生成一个全新的 String。s.len() 返回的是字节数，不是字符数：中文每个字占 3 个字节，所以“你好 Rust”.len() 是 11，而 .chars().count() 才是 7。按“第几个字符”切分时不能直接拿字节下标去切，否则可能切在 UTF-8 多字节字符中间而 panic；需要按字符处理时用 chars()。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. HashMap 的 entry API：一次哈希完成“查改”两件事"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C++ 里统计词频常要查两次，Rust 的 entry API 收成一句：*counts.entry(level.to_string()).or_insert(0) += 1。entry(key) 找到槽位；or_insert(0) 表示“不存在就先插入 0，再返回指向值的可变引用”；前面的 * 解引用后 += 1 就是累加。整个过程只哈希一次 key。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "HashMap 的键必须实现 Eq + Hash，String、整数、元组都天然满足；自定义结构体做键时要派生这两个 trait。",
+            "counts[k] 在 key 不存在时会 panic，和 Vec 索引一样；不确定时用 counts.get(k)，返回 Option<&V>。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "4. HashMap 不保证遍历顺序，Vec 才是“有序”的那一个"
+        },
+        {
+          "kind": "paragraph",
+          "text": "HashMap 内部按哈希值排布，遍历顺序既不是插入顺序也不是键的排序，每次运行都可能不同。需要稳定输出（写日志、做对比测试、给用户看报表）时，先把键收集成 Vec 再排序：let mut keys: Vec<&String> = counts.keys().collect(); keys.sort(); 这也是周六项目 1 的实用模式：HashMap 负责计数，Vec 负责定序。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 迭代器的三种借用级别"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "iter()：借用每个元素，遍历完原集合还能用。",
+            "iter_mut()：可变借用每个元素，可以原地修改。",
+            "into_iter()：拿走集合本身的所有权，元素被移出，遍历完原集合不能再用。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "读报错的技巧：如果 into_iter 之后还想用原集合，编译器会报 moved value，这时先问自己“我是真的要消费掉它，还是只想读一遍”——绝大多数情况答案是后者，改成 iter() 即可。for x in vec 在 Vec 上默认就是 into_iter，循环体里拿到的 x 是 owned 值，这和 for x in &vec 拿到 &T 是不同的。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "日志级别计数：Vec 收集、String 拼接、HashMap entry 计数、排序后稳定输出",
+          "code": "use std::collections::HashMap;\n\nfn main() {\n    let levels: Vec<String> = vec![\n        \"INFO\".to_string(),\n        \"ERROR\".to_string(),\n        \"INFO\".to_string(),\n    ];\n    println!(\"第 0 个级别: {}\", levels[0]);\n    match levels.get(99) {\n        Some(v) => println!(\"第 99 个级别: {v}\"),\n        None => println!(\"第 99 个级别不存在\"),\n    }\n    let mut msg = String::from(\"启动\");\n    msg.push_str(\"完成\");\n    let summary = format!(\"{msg}, 共 {} 条级别记录\", levels.len());\n    println!(\"{summary}\");\n    let text = \"你好 Rust\";\n    println!(\"\\\"{text}\\\" 的字节数是 {}, 字符数是 {}\", text.len(), text.chars().count());\n    let logs = [\n        \"INFO server started\",\n        \"ERROR disk full\",\n        \"INFO request ok\",\n        \"WARN slow query\",\n        \"ERROR disk full\",\n        \"INFO request ok\",\n    ];\n    let mut counts: HashMap<String, usize> = HashMap::new();\n    let mut error_msgs: Vec<String> = Vec::new();\n    for line in logs {\n        let (level, rest) = line.split_once(' ').unwrap_or((line, \"\"));\n        *counts.entry(level.to_string()).or_insert(0) += 1;\n        if level == \"ERROR\" {\n            error_msgs.push(rest.to_string());\n        }\n    }\n    let mut keys: Vec<&String> = counts.keys().collect();\n    keys.sort();\n    for k in keys {\n        println!(\"{k}: {}\", counts[k]);\n    }\n    println!(\"ERROR 消息: {}\", error_msgs.join(\" | \"));\n    let total: usize = levels.iter().map(|s| s.len()).sum();\n    println!(\"级别名总字节数: {total}\");\n    println!(\"仍可使用 levels, 长度 {}\", levels.len());\n}"
+        },
+        {
+          "kind": "callout",
+          "text": "预期输出（已在本机 cargo run 验证，clippy 零警告）：第 0 个级别: INFO；第 99 个级别不存在；启动完成, 共 3 条级别记录；“你好 Rust” 的字节数是 11, 字符数是 7；ERROR: 2；INFO: 3；WARN: 1；ERROR 消息: disk full | disk full；级别名总字节数: 13；仍可使用 levels, 长度 3。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo new log_count，把代码写入 src/main.rs，执行 cargo run。再动手验证两点：把 levels.get(99) 改成 levels[99] 重新运行，看 panic 的报错；把 counts.keys() 收集后不排序直接输出，多跑两次看顺序是否稳定。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "写一个函数 fn word_count(text: &str) -> HashMap<String, usize>：按空白切分输入文本，用 entry API 统计每个词出现的次数。",
+            "再写一个函数，把统计结果转成 Vec<(&String, &usize)>，按次数从高到低排序，次数相同时按词典序排列，打印前 5 名。",
+            "输入用一段中文加英文混合的句子（例如 “hello world hello 你好 世界 你好”），验证中文词能被正确切分计数，len() 与 chars().count() 的区别在输出里能看出来。",
+            "故意写一次 counts[\"不存在的词\"]，看 panic 报错；再改成 counts.get(\"不存在的词\")，用 match 打印“未出现”。"
+          ],
+          "verification": "cargo run 输出的前 5 名顺序符合“次数降序、词典序 tie-break”的规则；panic 实验与 get 实验各做一次并能说清区别；再跑 cargo clippy，零警告。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "v[i] 和 v.get(i) 在越界时的行为有什么不同？下标来自外部输入时应该用哪一个，为什么？",
+          "a": "v[i] 越界直接 panic，程序停下；v.get(i) 返回 None，可以由程序自己处理。外部输入的下标不可信，优先用 get，把“不存在”变成可处理的分支而不是崩溃。"
+        },
+        {
+          "q": "*counts.entry(k).or_insert(0) += 1 里的 * 是干什么的？去掉它会发生什么？",
+          "a": "or_insert 返回的是指向值的可变引用 &mut usize，* 解引用后才能对值本身做 += 1；去掉 * 就是对引用做加法，类型不匹配而编译失败。"
+        },
+        {
+          "q": "为什么 HashMap 的遍历顺序不能当作稳定输出？需要稳定报表时应该怎么处理？",
+          "a": "HashMap 按哈希值排布内部桶，顺序既非插入序也非键序，且可能随运行变化；需要稳定输出时先把键收集成 Vec 并排序，再按排好的顺序查表输出。"
+        },
+        {
+          "q": "“你好 Rust”.len() 是 11 而 chars().count() 是 7，这个差值是怎么来的？按字节下标切分中文字符串会有什么风险？",
+          "a": "每个中文字符占 3 个字节，2 个汉字 6 字节，加 1 个空格和 4 个英文字母共 11 字节；字符数是 7。按字节下标切分可能切在多字节字符中间，Rust 会 panic，正确做法是用 chars() 或按字符边界处理。"
+        },
+        {
+          "q": "for x in vec、for x in &vec、for x in vec.into_iter() 拿到的 x 类型有什么不同？哪种遍历之后原集合不能再用？",
+          "a": "for x in vec 等价于 into_iter，x 是 owned 值；for x in &vec 是 iter，x 是 &T；显式 into_iter 同第一种。into_iter 消费集合，遍历完原集合不能再用；iter 只借用，之后仍可用。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清 Vec、String、HashMap 各自对应的 C++ 容器，以及所有权上的关键差别",
+        "能解释 entry API 的读法，并说清它为什么比“先查后插”少一次哈希",
+        "示例代码在本机 cargo run 通过，并动手验证了索引 panic 与 HashMap 无序输出",
+        "跟练任务完成：词频统计按次数降序输出前 5 名，clippy 零警告",
+        "自测题 5 道全部能说出要点"
+      ]
     }
   ]
 }
