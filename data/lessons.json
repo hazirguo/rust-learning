@@ -1726,6 +1726,196 @@
         "跟练任务完成：词频统计按次数降序输出前 5 名，clippy 零警告",
         "自测题 5 道全部能说出要点"
       ]
+    },
+    {
+      "dayNumber": 10,
+      "weekNumber": 2,
+      "title": "错误处理：Option、Result 与 ? 运算符",
+      "lessonDate": "2026-11-04",
+      "goal": "分清“可能不存在”和“可能失败”，掌握 Option 与 Result 的用法，能用 ? 运算符把错误干净地向上传递，写出不再靠 unwrap 硬撑的日志处理代码。",
+      "summary": "Option 回答“有没有”、Result 回答“成没成”，panic 只用于无法恢复的状态；? 展开就是 Ok 拆值、Err 提前返回，错误类型不一致时靠 From 转换或 Box<dyn Error> 兜底。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "概念：C/C++ 的错误处理对照",
+              "minutes": "10 分钟",
+              "detail": "空指针、errno、返回码、异常四种老办法各有什么代价"
+            },
+            {
+              "label": "核心：Option 与 Result 的类型含义",
+              "minutes": "15 分钟",
+              "detail": "None 不是空指针，Err 不是异常；match、if let 与组合子的分工"
+            },
+            {
+              "label": "代码：跟读并运行示例",
+              "minutes": "15 分钟",
+              "detail": "用 ? 汇总 ERROR 行状态码的日志小例子，改输入看输出变化"
+            },
+            {
+              "label": "跟练任务",
+              "minutes": "20 分钟",
+              "detail": "把“遇到坏行就全盘失败”改成“跳过坏行并计数”，见下方练习"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. C/C++ 里错误处理有四种老办法，Rust 只留了两种，而且都写进了类型里"
+        },
+        {
+          "kind": "paragraph",
+          "text": "空指针表示“没找到”：C 里返回 NULL，调用方忘了判空就解引用，崩溃在离出错很远的地方。Rust 的对应物是 Option<T>：Some(v) 表示有值，None 表示没有，类型本身逼你先 match、if let 或用组合子打开它，没有“忘了判空”这个选项。errno 与返回码表示“失败了”：调用方可以无视返回码，错误悄悄溜过去；Rust 的对应物是 Result<T, E>：Ok(v) 成功、Err(e) 失败，同样必须显式处理，且泛型 E 在签名上就说明了可能怎么失败。异常的好处是正常路径干净，代价是“会不会抛、抛什么”在签名上看不出来；Rust 没有异常，panic 不算错误处理机制，它对应 assert 失败或无法恢复的状态。所有可恢复的错误都走 Result，调用链上每一层都看得见。一句话：Option 回答“有没有”，Result 回答“成没成”，两者都是值，不是控制流魔法；panic 回答“程序是不是已经错到没法继续了”。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. Option 的三种打开方式：match、if let、组合子"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "level_of：空行返回 None，非空行返回 Some(级别名）",
+          "code": "fn level_of(line: &str) -> Option<&str> {\n    line.split_whitespace().next()\n}"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "需要把两种情况都讲清楚时用 match：Some(l) 和 None 两个分支都必须写，漏写编译不过。",
+            "只关心有值的那一种时用 if let：if let Some(l) = level_of(line)，None 直接跳过，代码短，但别用它偷偷丢掉本该处理的 None。",
+            "只想做简单变换时用组合子：map 把 Some 里的值换个样子（None 保持 None），unwrap_or 给缺省值，and_then 把“可能不存在”的两步串起来；链超过两步就改回 match，可读性优先。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "常见误解：以为 Option 是“可空指针的语法糖”。不是。Option<T> 是一个枚举，Some 里装的是完整的 T；对 Option<&str> 这类引用类型编译器确实会用空指针做内存优化（niche 优化），但那是实现细节，不是语义——你仍然不能把它当指针解引用，也不能和 NULL 混为一谈。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. Result 与 ? 运算符：错误向上传递的标准写法"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "code_of：能解析出数字就是 Ok，不能就是 Err",
+          "code": "fn code_of(line: &str) -> Result<u32, std::num::ParseIntError> {\n    let code = line.split_whitespace().nth(2).unwrap_or(\"0\");\n    code.parse()\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "这里的 unwrap_or(\"0\") 处理的是“第三个词不存在”这个缺失问题（Option 层面），缺失时先给个缺省值再解析；解析失败则是另一层问题，走 Result。? 运算符只能出现在返回 Option 或 Result 的函数里，意思是 Ok 就拆出值继续往下走，Err 就立刻从当前函数返回，把错误交给调用方。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "? 展开后的等价写法（同一错误类型时）",
+          "code": "// 带 ? 的写法\nlet n: u32 = s.parse()?;\n\n// 等价的展开写法\nlet n: u32 = match s.parse() {\n    Ok(v) => v,\n    Err(e) => return Err(e),\n};"
+        },
+        {
+          "kind": "paragraph",
+          "text": "? 的真正威力在调用链上：summarize 里对每一行调用 code_of(line)?，任何一行解析失败，整个汇总立刻失败，不需要每层写 if 判断、也不需要把错误码一层层手动往上搬——这就是 C 语言里最啰嗦的那部分被语言接管了。"
+        },
+        {
+          "kind": "callout",
+          "text": "两个细节容易踩：? 的错误类型必须能转换——函数返回 Result<T, MyError> 而 ? 后面是 ParseIntError 时，编译器会报 From trait 未实现；解决办法是统一错误类型，或用 Box<dyn Error> 先兜底（本课示例就这么做），等周六项目 1 再引入 anyhow 做正式管理。? 在返回 Option 的函数里同样能用，None 时提前返回 None；在返回普通值的函数里不能用，编译器会直接报错——这是在提醒你“这个函数的签名还没准备好处理失败”。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. main 也可以返回 Result"
+        },
+        {
+          "kind": "paragraph",
+          "text": "以前 main 的返回类型是 ()，出错只能 panic 或自己打印后 exit。改成 fn main() -> Result<(), Box<dyn Error>> 后，main 里也可以用 ?，一旦出错，运行时会把 Err 的 Debug 形式打印出来并以非零状态码退出。对写 CLI 工具来说这是最顺手的起点：正常路径干净，失败路径也不至于静默。Box<dyn Error> 里的 dyn 表示“任何实现了 Error trait 的错误类型都行”，它是一个装箱的 trait 对象，牺牲一点点性能换来“不用为每种错误写转换代码”的便利，原型和工具阶段很划算，性能敏感的核心路径再换回具体错误类型。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. unwrap、expect 与 ? 的分工：什么时候可以“硬来”"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "unwrap：失败就 panic，附带默认报错信息。只用在“你能证明这里绝不会失败”的地方，例如解析一个写死在代码里的常量。",
+            "expect(\"说明\")：和 unwrap 一样会 panic，但 panic 信息里带上你写的说明，排错时一眼就知道是哪一处假设崩了。比 unwrap 好，仍然只用于“绝不失败”的场合。",
+            "?：失败就返回给调用方，不 panic。处理外部输入、文件内容、用户参数、网络数据时默认用它。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "判别标准很简单：这个失败的来源是不是程序员能控制的？写死的常量、刚构造好的数据结构是能控制的；日志文件里的一行、用户敲的参数、磁盘上的文件是不能控制的——后者一律不许 unwrap。示例里的 unwrap_or(\"0\") 处理的是缺失词，不是解析失败，别把两者混淆：缺失给缺省值是合理的业务决策，解析失败直接 panic 则不是。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 借用检查器报错的读法：? 相关报错长什么样"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "“? operator cannot be used in a function that returns ()”：当前函数签名是 -> ()，改成返回 Result 或 Option 才能用 ?。",
+            "“the trait From<ParseIntError> is not implemented for MyError”：? 两边的错误类型不一致，需要加 From 转换或把返回类型改成 Box<dyn Error>。",
+            "“mismatched types, expected Result<_, _>, found Option<_>”：在返回 Result 的函数里对 Option 用了 ?（或反过来），两者不能混用；需要先用 ok_or 把 Option 转成 Result。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "读报错的通用顺序：先看报错指向的 ? 这一行，再看函数签名里的返回类型，最后看 ? 前面表达式的错误类型——这三个对不上，就是全部原因。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "用 ? 汇总 ERROR 行状态码：Option 取级别、Result 解析状态码、? 向上传递",
+          "code": "use std::error::Error;\n\nfn level_of(line: &str) -> Option<&str> {\n    line.split_whitespace().next()\n}\n\nfn code_of(line: &str) -> Result<u32, std::num::ParseIntError> {\n    let code = line.split_whitespace().nth(2).unwrap_or(\"0\");\n    code.parse()\n}\n\nfn summarize(lines: &[&str]) -> Result<(usize, u32), Box<dyn Error>> {\n    let mut errors = 0;\n    let mut sum = 0;\n    for line in lines {\n        if level_of(line) == Some(\"ERROR\") {\n            errors += 1;\n            sum += code_of(line)?;\n        }\n    }\n    Ok((errors, sum))\n}\n\nfn main() -> Result<(), Box<dyn Error>> {\n    let lines = [\n        \"INFO start 0\",\n        \"ERROR disk 500\",\n        \"WARN retry 0\",\n        \"ERROR net 404\",\n    ];\n    let (errors, sum) = summarize(&lines)?;\n    println!(\"errors={errors} sum={sum}\");\n    println!(\"missing level: {:?}\", level_of(\"\"));\n    println!(\"bad code: {:?}\", code_of(\"ERROR x abc\"));\n    println!(\"ok code: {:?}\", code_of(\"INFO ok 200\"));\n    Ok(())\n}"
+        },
+        {
+          "kind": "callout",
+          "text": "预期输出（已在本机 cargo run 验证通过，cargo clippy 零警告）：errors=2 sum=904；missing level: None；bad code: Err(ParseIntError { kind: InvalidDigit })；ok code: Ok(200)"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo new error_handling，把代码写入 src/main.rs，执行 cargo run。再动手验证两点：把 summarize 输入里的 \"ERROR net 404\" 改成 \"ERROR net abc\"，重新运行，看整个汇总是不是因为一行坏数据就失败了（这正是跟练任务要改掉的行为）；把 main 的返回类型改回 ()，看编译器对 summarize(&lines)? 报什么错，再改回来。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "在示例工程里加一个函数 fn first_error_code(lines: &[&str]) -> Option<u32>：返回第一行 ERROR 的状态码；没有 ERROR 行或第一行 ERROR 的状态码解析失败时都返回 None（提示：对 code_of 的结果用 .ok() 把 Result 转成 Option）。",
+            "把 summarize 的返回类型改成 Result<(usize, u32, usize), Box<dyn Error>>，第三个值是跳过的坏行数：ERROR 行的状态码解析失败时不再用 ? 直接返回，而是把该行计入 skipped，继续处理后面的行。",
+            "用下面这组输入验证：[\"INFO start 0\", \"ERROR disk 500\", \"ERROR broken abc\", \"\", \"ERROR net 404\"]，期望输出 errors=3、sum=904、skipped=1，空行不计入也不报错。",
+            "把 first_error_code 的结果打印出来，并跑 cargo clippy，零警告。"
+          ],
+          "verification": "cargo run 输出 errors=3、sum=904、skipped=1；first_error_code 对上述输入返回 Some(500)，对全是 INFO 的输入返回 None；clippy 零警告。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "“可能不存在”和“可能失败”分别对应哪个类型？为什么不能用同一个类型同时回答这两个问题？",
+          "a": "“可能不存在”对应 Option（Some/None），“可能失败”对应 Result（Ok/Err）。None 不携带失败原因，Err 必须携带错误值；用 Option 表示失败会丢掉原因，用 Result 表示缺失则要凭空捏一个错误类型，两者语义不同，混用会让调用方误判。"
+        },
+        {
+          "q": "? 运算符展开后等价于什么代码？它对函数签名有什么要求，错误类型不一致时会报什么错？",
+          "a": "? 展开后约等于 match：Ok 拆值继续，Err 立刻 return Err。要求当前函数返回 Option 或 Result，且 ? 后面错误的 From 转换要存在；类型不一致时编译器报 From trait 未实现。"
+        },
+        {
+          "q": "unwrap、expect、? 各自在什么场合用？处理日志文件里的一行坏数据时应该用哪一个，为什么？",
+          "a": "unwrap/expect 失败就 panic，只用于能证明绝不失败的场合（expect 多一条自定义说明）；? 失败就返回给调用方，不 panic。日志坏行是外部输入，本来就可能失败，默认用 ? 或在汇总层跳过计数，绝不用 unwrap。"
+        },
+        {
+          "q": "main 返回 Result<(), Box<dyn Error>> 有什么好处？Box<dyn Error> 里的 dyn 起什么作用？",
+          "a": "main 返回 Result 后也可以用 ?，出错时运行时打印 Err 并以非零状态码退出，正常路径保持干净。Box<dyn Error> 是装箱的 trait 对象，能装任何实现了 Error 的错误类型，免去为每种错误写 From 转换，原型阶段最省事。"
+        },
+        {
+          "q": "C 语言里“返回 -1 再查 errno”的写法和 Rust 的 Result 相比，调用方最容易犯的错误有什么不同？",
+          "a": "C 里调用方可以无视返回码和 errno，错误静默溜过；Rust 里 Result 必须显式处理（match、?、组合子），忽略它编译器会警告（must_use），错误不可能在无人察觉的情况下被丢掉。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清 Option 与 Result 各自回答什么问题，以及它们和空指针、errno、异常的对应关系",
+        "能解释 ? 运算符的展开含义，并说清它对函数签名和错误类型的两个要求",
+        "示例代码在本机 cargo run 通过，并动手验证了坏行导致整体失败和 main 返回 () 时的编译报错",
+        "跟练任务完成：汇总输出 errors=3、sum=904、skipped=1，clippy 零警告",
+        "自测题 5 道全部能说出要点"
+      ]
     }
   ]
 }
