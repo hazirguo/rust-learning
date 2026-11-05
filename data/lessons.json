@@ -1916,6 +1916,143 @@
         "跟练任务完成：汇总输出 errors=3、sum=904、skipped=1，clippy 零警告",
         "自测题 5 道全部能说出要点"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "模板实例化、虚表、继承层次在 Rust 里各对应什么",
+              "label": "概念：C/C++ 的模板与虚函数对照",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "T、T: PartialOrd、where 子句的读法，bound 缺了会报什么错",
+              "label": "核心：泛型函数、泛型 struct 与 trait bound",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "largest、Stat、Summarizable、泛型打印与 dyn 打印的对比",
+              "label": "代码：跟读并运行示例",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "给新日志类型实现 trait、写泛型计数函数、用 Vec 装 trait 对象批量打印",
+              "label": "跟练任务",
+              "minutes": "20 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. C++ 的三件套，Rust 各自怎么接"
+        },
+        {
+          "kind": "paragraph",
+          "text": "模板与泛型：两者都在编译时为每种具体类型生成专用代码（单态化），运行期没有泛型开销；不同的是，Rust 泛型体在定义时就要通过 trait bound 的检查——函数里对 T 用了大于号，签名上就必须写 T: PartialOrd，否则定义处直接报错，不用等到某个调用点才发现。bound 是泛型函数的“使用说明书”。继承与 trait：Rust 没有继承，struct 之间不能继承，trait 只规定“能做什么”，不规定“是什么”，也不携带数据；一个 struct 可实现多个 trait，多个 struct 可实现同一个 trait，组合代替了层次。虚函数与 trait 对象：泛型函数默认静态分发，可内联、最快；&dyn Trait 才是动态分发，运行期查虚表，一份代码处理多种类型，代价和 C++ 虚函数相当。已知类型用泛型，不知道、要把不同类型装进同一集合时才用 dyn。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 泛型函数与泛型 struct：T 是占位名，bound 才是契约"
+        },
+        {
+          "kind": "paragraph",
+          "text": "fn largest<T: PartialOrd>(list: &[T]) -> &T 的读法是：对任意类型 T，只要它实现了 PartialOrd，这个函数就能接受 T 的切片并返回最大元素的引用。去掉 bound，函数体里 item > max 会立刻报错，因为编译器不会假设任意 T 能比较。泛型 struct 同理：Stat<T> 本身不对 T 做假设，但 show 方法要打印 value，就必须要求 T: Display；bound 写在 impl 上，按需加。bound 写多了可用 where 子句换行写，语义完全一样。常见误解：以为泛型是运行期装箱实现的。不是，单态化后 largest(&[i32]) 和 largest(&[char]) 是两份独立机器码，代价在编译时间和二进制体积，不在运行期。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. trait 的定义、实现与默认方法"
+        },
+        {
+          "kind": "paragraph",
+          "text": "trait 定义只写方法签名、不写数据，实现用 impl Summarizable for AccessLog；一个类型可实现多个 trait，一个 trait 可有默认方法（实现方不写就用默认的，写了就覆盖）。还有一条硬规则叫孤儿规则：只能为自己 crate 的类型实现 trait，或为自己 crate 的 trait 实现任意类型，不能为别人的类型实现别人的 trait。这保证了“同一类型加同一 trait 全世界只有一种实现”，读 Firecracker、Cloud Hypervisor 源码时，看到一个 impl 就知道它一定出自类型或 trait 的定义方。#[derive(Debug, Clone, PartialEq)] 是编译器自动生成的实现，只适用于结构简单的类型，涉及业务逻辑时必须手写 impl。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 静态分发与动态分发：泛型函数和 dyn 函数的取舍"
+        },
+        {
+          "kind": "paragraph",
+          "text": "print_summary<T: Summarizable> 是泛型：每种类型生成一份专用版本，可内联，速度最快，代价是类型必须编译时已知。print_summary_dyn(&dyn Summarizable) 是 trait 对象：参数大小编译时未知，必须通过引用或 Box 间接持有，运行期查虚表，一份代码处理所有实现者，还能把不同类型装进同一个 Vec<&dyn Summarizable>。取舍标准：写库、写热路径、类型已知时默认用泛型；写插件、日志汇总、运行期多态时用 dyn。不要一上来全用 dyn，也不要为“性能”拒绝 dyn。注意对象不安全：trait 里返回 Self 或带泛型参数的方法不能做成 dyn，本课的 Summarizable 只返回 String，没有这个问题。"
+        },
+        {
+          "kind": "callout",
+          "text": "重要提醒：dyn 的大小在编译时未知，不能按值传递或直接存放，须用 &dyn Trait 或 Box<dyn Trait>；集合用 Vec<&dyn Trait> 或 Vec<Box<dyn Trait>>。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. trait 相关报错的读法"
+        },
+        {
+          "items": [
+            "trait bound `T: PartialOrd` is not satisfied：函数体里对 T 做了比较、打印、克隆，但签名 bound 没覆盖，先看操作再去签名补 bound。",
+            "trait `Summarizable` is not implemented for `X`：X 缺少对应的 impl 块；若 X 是别人的类型，孤儿规则会拦住，改用包一层新类型的 newtype 模式。",
+            "size for `dyn Summarizable` cannot be known：试图按值传或直接存放 dyn，改成引用或 Box。",
+            "对象不安全报错：trait 里有返回 Self 或带泛型参数的方法，这类 trait 只能走泛型，不能走 dyn。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "caption": "泛型函数 largest、泛型 struct Stat、trait Summarizable、泛型打印与 dyn 打印对比",
+          "code": "use std::fmt::Display;\n\nfn largest<T: PartialOrd>(list: &[T]) -> &T {\n    let mut max = &list[0];\n    for item in &list[1..] {\n        if item > max { max = item; }\n    }\n    max\n}\n\nstruct Stat<T> { name: &'static str, value: T }\n\nimpl<T: Display> Stat<T> {\n    fn show(&self) { println!(\"{} = {}\", self.name, self.value); }\n}\n\ntrait Summarizable { fn summarize(&self) -> String; }\n\nstruct AccessLog { status: u32, path: String }\nstruct ErrorLog { code: u32, msg: String }\n\nimpl Summarizable for AccessLog {\n    fn summarize(&self) -> String { format!(\"access {} {}\", self.status, self.path) }\n}\n\nimpl Summarizable for ErrorLog {\n    fn summarize(&self) -> String { format!(\"error {} {}\", self.code, self.msg) }\n}\n\nfn print_summary<T: Summarizable>(item: &T) { println!(\"{}\", item.summarize()); }\nfn print_summary_dyn(item: &dyn Summarizable) { println!(\"{}\", item.summarize()); }\n\nfn main() {\n    let nums = [12, 7, 31, 5];\n    println!(\"largest int: {}\", largest(&nums));\n    let chars = ['a', 'z', 'm'];\n    println!(\"largest char: {}\", largest(&chars));\n    Stat { name: \"errors\", value: 3 }.show();\n    Stat { name: \"ratio\", value: 0.75 }.show();\n    let a = AccessLog { status: 200, path: \"/api/logs\".to_string() };\n    let e = ErrorLog { code: 500, msg: \"disk full\".to_string() };\n    print_summary(&a);\n    print_summary(&e);\n    print_summary_dyn(&a);\n    print_summary_dyn(&e);\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo new generics_traits，把代码写入 src/main.rs，执行 cargo run。预期输出：largest int: 31；largest char: z；errors = 3；ratio = 0.75；access 200 /api/logs；error 500 disk full；access 200 /api/logs；error 500 disk full（已在本机 cargo run 验证通过，cargo clippy 零警告）。再动手验证两点：删掉 largest 签名里的 T: PartialOrd，看大于号那行报什么错，再加回去；把 print_summary_dyn 改成按值接收，看 dyn 大小未知的报错，再改回引用。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "新增日志类型 WarnLog { path: String, msg: String }，为它实现 Summarizable，汇总格式为 warn <path> <msg>；在 main 里用泛型打印和 dyn 打印各打印一次。",
+            "写泛型函数 fn count_eq<T: PartialEq>(list: &[T], target: &T) -> usize，统计切片里等于目标的元素个数；用整数切片 [1, 2, 2, 3]、目标 2 和字符切片 ['a', 'b', 'a']、目标 'a' 各测一次。",
+            "写函数 fn print_all(items: &[&dyn Summarizable])，循环调用 dyn 打印；用 AccessLog、ErrorLog、WarnLog 各一条组成切片调用它。",
+            "跑 cargo clippy，零警告。"
+          ],
+          "verification": "cargo run 输出里包含 warn 开头的汇总行；count_eq 两次结果都是 2；print_all 一次打印三行，分别是 access、error、warn；clippy 零警告。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清泛型单态化、trait bound、trait 与继承的区别",
+        "能解释泛型静态分发与 dyn 动态分发的取舍，并说清各自的适用场景",
+        "示例代码在本机 cargo run 通过，并动手验证了删 bound 和按值传 dyn 的两处编译报错",
+        "跟练任务完成：WarnLog 两种打印都通过，count_eq 两次结果都是 2，print_all 打印三行，clippy 零警告",
+        "自测题 5 道全部能说出要点"
+      ],
+      "dayNumber": 11,
+      "goal": "理解泛型在编译时为每种类型生成专用代码，掌握 trait 的定义与实现，能区分泛型静态分发与 trait 对象动态分发，并用 trait 代替基类加虚函数的写法。",
+      "lessonDate": "2026-11-05",
+      "quiz": [
+        {
+          "a": "相同点是都在编译时为每种具体类型生成专用代码（单态化），运行期无泛型开销；不同点是 Rust 泛型体在定义时就按 bound 检查，bound 是调用契约，错误在定义处暴露，不用等到使用点才从实例化栈里翻。",
+          "q": "Rust 泛型和 C++ 模板在实现机制上有什么相同点和不同点？为什么 Rust 的泛型函数体在定义时就要通过 bound 检查？"
+        },
+        {
+          "a": "trait 只规定行为、不携带数据、不形成继承层次，一个类型可实现多个 trait；纯虚基类同时是类型层次和数据载体。孤儿规则保证“同一类型加同一 trait 全世界只有一种实现”，读源码时看到 impl 就能确定它出自类型或 trait 的定义方。",
+          "q": "trait 和 C++ 的纯虚基类有什么本质区别？孤儿规则为什么存在？"
+        },
+        {
+          "a": "报错在函数体里 item > max 那一行，大意是二元运算不能用于泛型 T、缺少 PartialOrd bound。这说明 bound 不是注释，是编译器检查函数体的依据：没声明的能力，函数体里就不许用。",
+          "q": "把 largest 的 bound T: PartialOrd 删掉后，编译器会在哪一行报错、报什么错？这说明了 bound 的什么作用？"
+        },
+        {
+          "a": "泛型是编译时静态分发，可内联、最快，但类型必须编译时已知，每种类型一份代码；dyn 是运行期虚表分发，一份代码处理多种类型，可装进同一集合，但有间接调用开销。运行期才知道类型、需要异构集合时必须用 dyn。",
+          "q": "泛型函数和 &dyn Trait 函数在分发时机、性能、适用场景上各有什么取舍？什么时候必须用 dyn？"
+        },
+        {
+          "a": "因为 dyn 背后的具体类型大小在编译时未知，编译器不知道按值要留多少空间。必须通过引用 &dyn Trait 或装箱 Box<dyn Trait> 间接持有，集合用 Vec<&dyn Trait> 或 Vec<Box<dyn Trait>>。",
+          "q": "为什么不能按值传递或直接存放 dyn Summarizable？要把它装进集合时应该用什么类型？"
+        }
+      ],
+      "summary": "泛型是编译时单态化，bound 是调用契约；trait 只规定行为、不带数据、不形成继承层次；类型编译时已知用泛型，运行期才知道类型或要装异构集合时用 dyn。",
+      "title": "泛型与 trait：不用继承做抽象",
+      "weekNumber": 2
     }
   ]
 }
