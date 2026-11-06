@@ -2053,6 +2053,157 @@
       "summary": "泛型是编译时单态化，bound 是调用契约；trait 只规定行为、不带数据、不形成继承层次；类型编译时已知用泛型，运行期才知道类型或要装异构集合时用 dyn。",
       "title": "泛型与 trait：不用继承做抽象",
       "weekNumber": 2
+    },
+    {
+      "dayNumber": 12,
+      "weekNumber": 2,
+      "title": "生命周期：读懂标注、让借用活得够久",
+      "lessonDate": "2026-11-06",
+      "goal": "读懂生命周期标注的含义，掌握三条省略规则，能读懂借用检查器关于生命周期的常见报错。",
+      "summary": "生命周期就是“引用有效的作用域范围”的名字：标注只说明引用之间的有效期关系，返回值活不过最短的输入；三条省略规则覆盖大多数签名，struct 借数据不能比主人活得久，'static 不等于永远不死。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "概念：C/C++ 的悬垂指针与 use-after-free 对照",
+              "minutes": "10 分钟",
+              "detail": "同一类 bug 在 C++ 里是运行期未定义行为，在 Rust 里是编译期错误"
+            },
+            {
+              "label": "核心：标注语法、省略规则、struct 里的生命周期与 'static",
+              "minutes": "15 分钟",
+              "detail": "'a 的读法、返回值的有效期由谁决定、三条省略规则、'static 的准确含义"
+            },
+            {
+              "label": "代码：跟读并运行示例",
+              "minutes": "15 分钟",
+              "detail": "longest、LogEntry、first_word、'static 字面量"
+            },
+            {
+              "label": "跟练任务",
+              "minutes": "20 分钟",
+              "detail": "写 shortest、给 struct 加方法、写持有引用的 Pair、故意制造并读懂一处生命周期报错"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. 为什么需要生命周期：C++ 里运行期才炸的 bug，Rust 在编译期拦下"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C/C++ 里函数返回指向局部变量的指针、对象释放后仍有指针指向它，编译器一般不拦，程序运行期可能恰好工作、可能读到垃圾数据、也可能深夜崩溃——悬垂指针与 use-after-free，属于未定义行为。Rust 把同一条规则提前到编译期：任何引用都不能比它指向的值活得久。借用检查器在编译时追踪每个值的有效期，并检查每一处引用是否落在这个范围之内。这个“有效期的名字”就是生命周期。它不是运行期的东西：编译完后标注就消失了，生成的机器码里没有任何生命周期检查，零运行期开销。两个常见误解要纠正：生命周期描述的是引用与被引用值之间的关系，不是给变量加过期时间；写了标注也不能延长数据寿命，关系本身不成立时写再多标注也过不了检查。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 标注语法：'a 只说明关系，不改变行为"
+        },
+        {
+          "kind": "paragraph",
+          "text": "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str 的读法是：函数接受两个生命周期都是 'a 的字符串切片，返回的切片生命周期也是 'a。'a 只是一个名字（像泛型里的 T），含义是 x、y 和返回值这三个引用的有效期存在同一个约束——返回值的有效期不超过 x 和 y 当中较短的那一个。调用 longest(&a, &b) 时，编译器取 a 和 b 两个引用有效期的交集作为返回值的有效期；如果把返回值存进一个比 b 活得久的位置，编译器会拒绝，因为返回值可能指向 b，而 b 在那个位置已经死了。标注没有“决定”谁活多久，它只是把“返回值可能来自 x 也可能来自 y”这个事实写出来，让编译器按最短的那个去检查。函数签名里一旦出现引用，生命周期要么全写出来，要么能被省略规则推导；既写不出、又推不出的签名会报 missing lifetime specifier——先数输入引用的个数，两个以上输入引用且返回引用时，必须由你写标注说明。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 三条省略规则：什么时候可以不写 'a"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "规则 1：每个引用参数各自获得一个独立的生命周期参数。fn f(x: &str, y: &str) 相当于 fn f<'a, 'b>(x: &'a str, y: &'b str)。",
+            "规则 2：只有一个输入引用时，输出引用的生命周期就是它的。fn first_word(s: &str) -> &str 不用写标注，就是这条规则在工作。",
+            "规则 3：方法里有 &self 或 &mut self 时，输出引用的生命周期就是 self 的。fn tag(&self) -> &str 不用写标注，返回的 &str 跟 self 活得一样久。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "推论：只有“多个输入引用、且返回引用”的签名才必须手写标注——规则 1 给每个输入分配了不同的生命周期，规则 2、3 又都不适用，编译器不知道返回值到底跟哪一个输入走。longest 有两个输入引用又返回引用，所以必须写 <'a> 把三个引用绑到同一个生命周期上。读 Firecracker、Cloud Hypervisor 源码时，满眼都是不带标注的 &self 方法和 &str 参数，这不是作者偷懒，而是省略规则覆盖了绝大多数情况；真正出现 <'a> 的地方，往往就是“函数在多个引用之间做选择并返回其中一个”的关键点，看到它就知道这里在表达引用之间的关系，值得多看一眼。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. struct 里的生命周期：借来的数据不能比主人活得久"
+        },
+        {
+          "kind": "paragraph",
+          "text": "struct LogEntry<'a> { level: &'a str, msg: &'a str } 的读法是：LogEntry 借用了两段字符串切片，它自己的有效期不能超过这两段数据。创建 LogEntry 时，编译器会检查 msg 指向的 String 是不是至少和这个 LogEntry 活得一样久；如果 String 先被释放，LogEntry 就成了悬垂引用，编译失败。impl 也要带上生命周期：impl<'a> LogEntry<'a>，意思是“对任意生命周期 'a 的 LogEntry，都提供这些方法”；方法里的 &self 返回 &str 时，省略规则 3 会把输出绑到 self 的生命周期上，所以 fn tag(&self) -> &str 不用写标注。什么时候用 &'a str，什么时候直接用 String？判断标准是所有权归属：只在解析日志的短暂过程中存在、用完就扔的结构，用 &'a str 借用，避免复制，性能最好，代价是调用方必须保证原数据活得够久；要存进集合、跨线程传递、长期保留的日志条目，就该用 String 持有数据，struct 不再带生命周期参数，省心但多一次分配。热路径上解析一次、用完即弃的结构适合借用；要跨越 await 点、跨线程、长期保存的结构适合持有所有权——第 5 周写 async 网关时还会回来验证这条经验。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 'static：活得和程序一样久，不等于“永远不死”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "字符串字面量 \"startup complete\" 的类型是 &'static str，因为字面量直接嵌在程序的二进制里，从程序启动到结束一直有效，所以它的生命周期是 'static——整个程序运行期。但 'static 有两个常见误读：一是以为 'static 的数据“永远不死、不会被释放”——'static 说的是引用在整个程序运行期内都有效，String::leak 可以把一个 String 变成 &'static str，但那是主动放弃释放、换来一个永不回收的分配，滥用就是内存泄漏，不要为了绕过生命周期报错而用它。二是以为函数签名里写 T: 'static 是要求 T 活一辈子——准确含义是“T 不借用任何比程序运行期短的数据”：一个完全拥有的 String 满足它，一个借用了局部变量的 &str 不满足。读到泛型 bound 里出现 'static 时，翻译成“这个类型里不能藏着短期借用”就对了。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 生命周期相关报错的读法"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "borrowed value does not live long enough：想用的值死得比引用早。典型场景是内层作用域里创建 String，把 longest 的结果带到外层用。先看“值什么时候被释放”，再看“引用被用到了什么时候”，把引用的使用范围缩到值的有效期之内，或把值移到更外层创建。",
+            "cannot return value referencing local variable：函数想返回指向自己局部变量的引用，局部变量在函数返回时就释放了，返回的引用必然悬垂。修法是返回一个拥有的值（String 而不是 &str），或把数据作为参数从外面借进来再返回。",
+            "lifetime may not live long enough：多见于闭包或 async 块里，某个引用要跨越一个比它生命周期更长的边界。先看闭包捕获了什么、捕获的东西活多久；常见修法是改成 move 闭包配合 owned 数据，或缩短闭包的使用范围。",
+            "missing lifetime specifier：签名里有多个输入引用又返回引用，省略规则推不出来。补上 <'a> 把相关的引用绑到一起。",
+            "x does not live long enough（配合 struct 使用时）：struct 借了 x，但 struct 被用到了 x 的作用域之外。修法二选一：把 struct 的使用范围缩进 x 的作用域，或把 struct 里的字段改成 String 让它自己持有数据。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "读报错的通用顺序：先找到“谁先死”（被引用的值），再找到“谁用得久”（引用被使用到的位置），两者对不上就是全部原因；标注写得对不对只是表述问题，关系本身错了是修不好的。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "存为 cargo 工程 src/main.rs（cargo new lifetimes 后替换），运行 cargo run",
+          "code": "// Day 12: 生命周期 —— 读懂标注\n// 标注只告诉编译器“引用之间有效期的关系”，不改变任何运行期行为。\n\nfn longest<'a>(x: &'a str, y: &'a str) -> &'a str {\n    if x.len() >= y.len() { x } else { y }\n}\n\nstruct LogEntry<'a> {\n    level: &'a str,\n    msg: &'a str,\n}\n\nimpl<'a> LogEntry<'a> {\n    fn show(&self) {\n        println!(\"[{}] {}\", self.level, self.msg);\n    }\n}\n\n// 只有一个输入引用：省略规则自动把输出的生命周期绑到输入上，不用写 'a\nfn first_word(s: &str) -> &str {\n    match s.find(' ') {\n        Some(i) => &s[..i],\n        None => s,\n    }\n}\n\nfn main() {\n    let a = String::from(\"access log line\");\n    let b = String::from(\"err\");\n    println!(\"longest: {}\", longest(&a, &b));\n\n    let entry = LogEntry { level: \"INFO\", msg: \"server started\" };\n    entry.show();\n\n    let line = String::from(\"GET /api/logs HTTP/1.1\");\n    println!(\"first word: {}\", first_word(&line));\n\n    // 'static：字符串字面量在整个程序运行期都有效\n    let s: &'static str = \"startup complete\";\n    println!(\"static: {}\", s);\n}"
+        },
+        {
+          "kind": "callout",
+          "text": "预期输出（已在本机 cargo run 验证通过，cargo clippy 零警告）：\nlongest: access log line\n[INFO] server started\nfirst word: GET\nstatic: startup complete\n\n再动手验证两点：把 longest 签名里的 <'a> 和三个 &'a str 里的标注都删掉，看编译器报 missing lifetime specifier，再加回去；把 let b = String::from(\"err\"); 移进一个内层 { } 作用域、并把 longest(&a, &b) 的结果在作用域外打印，看编译器报 borrowed value does not live long enough，再移回来。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "写一个函数 fn shortest<'a>(x: &'a str, y: &'a str) -> &'a str，返回两个字符串切片中较短的那个；用 (\"access log line\", \"err\") 和 (\"ok\", \"timeout\") 两组输入各测一次。",
+            "给 LogEntry 加一个方法 fn tag(&self) -> &str，返回 level 字段；在 main 里调用并打印。想一想：这个方法为什么不用写生命周期标注（提示：省略规则 3）。",
+            "写一个持有两个引用的 struct struct Pair<'a> { first: &'a str, second: &'a str }，再写函数 fn pick<'a>(p: &Pair<'a>, use_first: bool) -> &'a str，根据 use_first 返回 first 或 second；在 main 里用一对字符串测两种分支。",
+            "故意制造一处生命周期报错：写一个函数 fn bad() -> &str { let s = String::from(\"local\"); &s }，看编译器报什么错；然后改成返回 String（fn good() -> String），让它通过编译。把两次报错与修复的思路记下来。",
+            "跑 cargo clippy，零警告。"
+          ],
+          "verification": "cargo run 输出里包含较短字符串 err 和 ok；tag 方法打印出 INFO；pick 两种分支分别返回正确的字段；bad 函数的报错能说出原因，good 版本能编译通过；clippy 零警告。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "生命周期标注在运行期起什么作用？为什么说它“只影响编译检查”，写了标注能不能延长数据的寿命？",
+          "a": "标注在运行期不起任何作用，编译后就消失了，零运行期开销；它只是告诉编译器引用之间的有效期关系，供借用检查器验证。写标注不能延长数据寿命，关系本身不成立时再多标注也过不了检查。"
+        },
+        {
+          "q": "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str 里的 'a 是什么意思？返回值的有效期由 x 和 y 中的哪一个决定？",
+          "a": "'a 是一个生命周期参数名，表示 x、y 和返回值共享同一个有效期约束；返回值的有效期不超过 x 和 y 中较短的那一个，因为返回值可能指向其中任意一个，编译器按最短的那个检查。"
+        },
+        {
+          "q": "三条生命周期省略规则各是什么？fn first_word(s: &str) -> &str 为什么不用写标注，而 longest 必须写？",
+          "a": "规则 1：每个引用参数各得一个独立生命周期；规则 2：只有一个输入引用时输出继承它；规则 3：方法有 &self 时输出继承 self 的生命周期。first_word 只有一个输入引用，适用规则 2；longest 有两个输入引用又返回引用，规则 2、3 都不适用，编译器不知道返回值跟谁走，必须手写标注。"
+        },
+        {
+          "q": "struct LogEntry<'a> 里的 'a 是什么意思？如果把 msg 字段改成 String，这个 struct 还需要生命周期参数吗？两种写法各适合什么场景？",
+          "a": "'a 表示 LogEntry 借用了两段字符串，它的有效期不能超过被借数据的有效期。改成 String 后 struct 自己持有数据，不再需要生命周期参数。借用版适合解析后用完即弃、避免复制的热路径；持有版适合要长期保存、跨线程或跨 await 点的场景。"
+        },
+        {
+          "q": "&'static str 和 String 有什么区别？T: 'static 这个 bound 的准确含义是什么？为什么不要用 String::leak 来绕过生命周期报错？",
+          "a": "&'static str 是指向程序二进制里字面量的引用，整个运行期有效，不拥有数据；String 是堆上拥有的、可修改的数据。T: 'static 的准确含义是“T 不借用任何比程序运行期短的数据”，不是“T 活一辈子”。String::leak 是主动放弃释放、换来永不回收的分配，滥用就是内存泄漏，不能当作绕过检查的常规手段。"
+        }
+      ],
+      "checklist": [
+        "能不查书说清生命周期是什么、为什么需要它，以及它和 C++ 悬垂指针的关系",
+        "能读懂 <'a> 标注，知道返回值的有效期由较短的输入决定",
+        "能背出三条省略规则，并判断一个签名是否需要手写标注",
+        "示例代码在本机 cargo run 通过，并动手验证了删标注和内层作用域借用的两处编译报错",
+        "跟练任务完成：shortest、tag、pick 都通过，bad/good 对照能说清原因，clippy 零警告"
+      ]
     }
   ]
 }
