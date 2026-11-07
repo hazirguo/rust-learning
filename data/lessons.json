@@ -2204,6 +2204,250 @@
         "示例代码在本机 cargo run 通过，并动手验证了删标注和内层作用域借用的两处编译报错",
         "跟练任务完成：shortest、tag、pick 都通过，bad/good 对照能说清原因，clippy 零警告"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "clap 管命令行解析、serde 管结构化数据、anyhow 管错误传播；对照 C 里的 getopt / 手写解析 / errno",
+              "label": "概念：三个库各解决什么问题",
+              "minutes": "10"
+            },
+            {
+              "detail": "Parser / Deserialize 怎么把声明变成代码；? 是什么、anyhow 的 Context 如何给错误加上下文",
+              "label": "核心：derive 宏、? 传播、错误链",
+              "minutes": "15"
+            },
+            {
+              "detail": "完整 logcli：参数解析、配置覆盖、逐行解析、两种输出、错误路径",
+              "label": "代码：跟读并运行示例",
+              "minutes": "15"
+            },
+            {
+              "detail": "加 --top 参数、加 --since 时间过滤、把统计逻辑抽成可测试函数并写两个单元测试",
+              "label": "跟练任务",
+              "minutes": "20"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 三个库的分工：先分清谁干什么，再动手"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 2 周的五个知识点（enum、集合、错误处理、泛型、trait）今天第一次合体。先看分工："
+        },
+        {
+          "items": [
+            "clap：命令行参数解析。对应 C 里的 getopt / getopt_long，但 Rust 里不用手写循环和 strcmp：定义一个 struct，字段上贴 #[arg(long)]，derive(Parser) 就生成解析代码，还自带 --help 和报错提示。",
+            "serde：结构化数据的序列化与反序列化。配置文件是 JSON，就定义一个 Config struct 贴 #[derive(Deserialize)]，serde_json::from_str 直接把 JSON 变成 struct；字段对不上时报错，不会悄悄丢数据。",
+            "anyhow：应用层错误处理。函数签名写 -> anyhow::Result<T>，内部用 ? 把错误往上抛，with_context 在每个可能失败的步骤上挂一句人话，程序出口用 {:?} 把整条错误链打出来。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "paragraph",
+          "text": "三者的关系是：clap 决定“用户想要什么”，serde 决定“配置长什么样”，anyhow 决定“出错时怎么说清楚”。一个 CLI 的骨架基本就是这三段拼起来：解析输入 → 读数据 → 算结果 → 输出。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. derive 宏：声明即代码"
+        },
+        {
+          "caption": "Args 声明：字段即参数，derive 生成解析代码",
+          "code": "#[derive(Parser, Debug)]\n#[command(version, about = \"统计日志文件里各级别的条数\")]\nstruct Args {\n    #[arg(long)]\n    file: PathBuf,\n    #[arg(long, default_value = \"trace\")]\n    level: String,\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "这段声明编译期会展开成真正的解析代码：--file 必须给（没有默认值），--level 不给就默认 \"trace\"，--help 自动生成，--version 自动生成。C 语言里这部分要写几十行 getopt 循环加手动校验，Rust 里是你“声明意图”，编译器替你生成。derive 展开的其实是 trait 实现：Parser 要求你的 struct 实现一套解析接口，宏替你写了这套实现。同理 #[derive(Deserialize)] 是替 Config 实现 Deserialize trait。第 11 天讲过“trait 加组合代替继承”——derive 就是这套机制最日常的用法：你不需要写一个基类去继承解析能力，只需要让类型实现对应的 trait。"
+        },
+        {
+          "kind": "callout",
+          "text": "常见误解：以为 derive 是“运行期反射”。不是。derive 宏在编译期展开成普通 Rust 代码，运行期没有任何反射开销；类型错了会在编译期就报错，不会等到运行时才发现配置解析失败。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. anyhow 与 ?：错误向上传，上下文就地加"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 10 天讲过 ?：函数返回 Result 时，? 在 Err 处提前返回错误。anyhow 的 Result<T> 是 Result<T, anyhow::Error> 的别名，它的 Error 能装下任何实现了 std::error::Error 的错误类型——io::Error、serde_json::Error 都能直接 ? 上来，不用你写 From 转换。关键在 with_context："
+        },
+        {
+          "caption": "with_context：给每个可能失败的步骤挂一句人话",
+          "code": "let text = fs::read_to_string(path)\n    .with_context(|| format!(\"无法读取日志文件 {}\", path.display()))?;",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "没有 context 时，用户只看到 No such file or directory (os error 2)，不知道是哪个文件、哪一步出的错。加了 context，错误链变成“无法读取日志文件 /no/such.log”加“Caused by: No such file or directory (os error 2)”：外层是人话（哪一步、哪个文件），内层是原始原因。写 CLI 的习惯应该是：每个可能失败的 I/O 或解析步骤都挂一句 context，代价是一行代码，收益是用户和你自己排错时不用猜。对应的 C 语言写法是 perror(\"read config\") 加文件名——同一件事，Rust 把它做进了类型系统。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "main 里处理最终错误的方式也值得注意：run() 返回 Result<()>、main 只做“打印并退出”，是 Rust CLI 的常见结构：真正的逻辑在 run 里用 ? 传播，main 是薄薄的一层外壳。"
+        },
+        {
+          "kind": "callout",
+          "text": "调试和给用户看都应该用 {:?}（Debug 格式）打印 anyhow 错误，它会打出整条错误链；{e}（Display 格式）只打印最外层。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. anyhow 与 thiserror：应用与库的分界"
+        },
+        {
+          "kind": "paragraph",
+          "text": "anyhow 给应用程序（main 函数所在的 crate）用：错误类型统一成一个 anyhow::Error，随便 ?，不用定义自己的错误 enum，适合“错误只管往上抛、最后统一打印”的场景，也就是今天的 logcli。thiserror 给库用：你要定义自己的错误 enum，每个变体写清楚 Display，调用方可以 match 你的错误类型做不同处理。库不能用 anyhow，因为调用方需要知道“到底出了哪种错”。判断标准一句话：错误是“自己消化、最后打印”就用 anyhow；错误是“交给调用方判断”就用 thiserror。第 3–4 周写项目 2 时还会回来验证。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 第 2 周知识点的落地对照"
+        },
+        {
+          "items": [
+            "enum 与模式匹配：level_rank 用 match 把级别字符串映射成数字等级，_ => 0 兜底未知级别；match args.format.as_str() 决定输出格式。match 必须穷尽，漏一个分支编译不过——这就是编译器替你做的“分支完整性检查”。",
+            "集合：HashMap<String, u64> 存“级别→条数”和“消息→次数”；entry(...).or_insert(0) 是“没有就插入 0、然后加一”的惯用写法，比 contains_key 再 insert 少一次查找。输出前先把 map 收集成 Vec 再排序，因为 HashMap 本身没有顺序。",
+            "Option 与 ?：parse_line 返回 Option<(&str, &str)>，格式不对返回 None；调用方用 let-else 处理 None。注意 parts.next()? 里的 ? 是在 Option 上用的：None 时整个函数提前返回 None，? 对 Option 和 Result 都适用。",
+            "泛型与 trait：Args::parse() 是 trait 方法（Parser trait），serde_json::from_str::<Config> 的类型参数由目标类型推断；fs::read_to_string 接受任何 AsRef<Path> 的参数，所以 &PathBuf 和 &Path 都能传——clippy 今天就抓了一个 &PathBuf，改成 &Path 更通用。",
+            "生命周期：parse_line 返回的 (&str, &str) 借用了输入的 line，省略规则自动把输出生命周期绑到输入上（第 12 天规则 2）；Stats 里存的是 String 而不是 &str，因为统计结果要活到函数返回之后、不能借用临时读入的文本——这正是第 12 天“长期保存用持有、短暂解析用借用”的取舍。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解与报错读法"
+        },
+        {
+          "items": [
+            "误解一：unwrap 在原型里“先用着以后再改”。原型里的 unwrap 有一个去处：变成正式代码里的 panic 点，而且是最难找的那种——用户传错一个文件就崩。习惯应该是：写第一版时就用 ? + with_context，不要给自己留“以后再改”的债。",
+            "误解二：expect 比 unwrap 好，所以到处用 expect。expect 只是给 panic 加了一句说明，程序还是会崩。它只适合“按逻辑不可能失败”的地方（比如测试里、或者刚刚校验过的输入），不适合处理用户输入、文件、网络这些真正会失败的输入。",
+            "误解三：clap 的 default_value 和配置文件的优先级搞混。今天的实现是：命令行默认值先占位，配置文件如果给了对应字段就覆盖它；但命令行显式传的值也会被配置文件覆盖（因为覆盖逻辑不区分“默认值”还是“显式传值”）。这是个已知的简化处理，真正的优先级应该是“命令行显式值 > 配置文件 > 默认值”，跟练任务里会让你修掉它。",
+            "报错读法：error[E0277]: the trait bound ... is not satisfied 出现在 derive 字段类型不对时；error: unexpected argument '--leve' found 是 clap 在运行期报的（拼写错误），它还会贴心地提示 did you mean '--level'；called Result::unwrap() on an Err value 是运行期 panic，说明某处 unwrap 遇到了真实错误——看到它就去找那个 unwrap，换成 ?。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "完整工程结构：logcli / Cargo.toml、sample.log、config.json、src/main.rs。先跑通，再改。注意：第一次运行需要联网下载 clap / serde / anyhow 等依赖。"
+        },
+        {
+          "caption": "Cargo.toml",
+          "code": "[package]\nname = \"logcli\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nanyhow = \"1\"\nclap = { version = \"4\", features = [\"derive\"] }\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "sample.log（12 行，含一行格式错误的行）",
+          "code": "2026-11-07T08:00:01Z INFO server started\n2026-11-07T08:00:02Z INFO listening on 0.0.0.0:8080\n2026-11-07T08:00:03Z DEBUG connection accepted\n2026-11-07T08:00:04Z WARN slow query: 120ms\n2026-11-07T08:00:05Z ERROR failed to open /var/log/app.log\n2026-11-07T08:00:06Z INFO request handled\n2026-11-07T08:00:07Z WARN slow query: 120ms\n2026-11-07T08:00:08Z ERROR failed to open /var/log/app.log\n2026-11-07T08:00:09Z INFO request handled\n2026-11-07T08:00:10Z TRACE heartbeat\ngarbage line without enough fields\n2026-11-07T08:00:11Z INFO request handled",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "config.json",
+          "code": "{\n  \"min_level\": \"warn\",\n  \"format\": \"text\"\n}",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "src/main.rs（完整代码）",
+          "code": "// 第 13 天 · 项目 1：日志分析 CLI —— clap + serde + anyhow\n// 用法：cargo run -- --file sample.log\n//       cargo run -- --file sample.log --level warn --format json\n//       cargo run -- --file sample.log --config config.json\n\nuse anyhow::{Context, Result};\nuse clap::Parser;\nuse serde::Deserialize;\nuse std::collections::HashMap;\nuse std::fs;\nuse std::path::{Path, PathBuf};\n\n/// 日志分析 CLI：按级别统计日志文件，并输出最常见的消息。\n#[derive(Parser, Debug)]\n#[command(version, about = \"统计日志文件里各级别的条数\")]\nstruct Args {\n    /// 要分析的日志文件（每行形如 \"2026-11-07T08:00:01Z INFO server started\"）\n    #[arg(long)]\n    file: PathBuf,\n\n    /// 只统计不低于该级别的日志：trace / debug / info / warn / error\n    #[arg(long, default_value = \"trace\")]\n    level: String,\n\n    /// 输出格式：text 或 json\n    #[arg(long, default_value = \"text\")]\n    format: String,\n\n    /// 可选的 JSON 配置文件，可覆盖 --level 与 --format\n    #[arg(long)]\n    config: Option<PathBuf>,\n}\n\n/// 配置文件结构（serde 直接从 JSON 反序列化）。\n#[derive(Debug, Deserialize, Default)]\nstruct Config {\n    min_level: Option<String>,\n    format: Option<String>,\n}\n\n#[derive(Debug, Default)]\nstruct Stats {\n    /// 各级别条数。\n    by_level: HashMap<String, u64>,\n    /// 各消息文本出现次数。\n    by_message: HashMap<String, u64>,\n    /// 低于阈值被跳过的行数。\n    skipped: u64,\n    /// 总行数。\n    total: u64,\n}\n\nfn level_rank(level: &str) -> u8 {\n    match level.to_ascii_lowercase().as_str() {\n        \"trace\" => 0,\n        \"debug\" => 1,\n        \"info\" => 2,\n        \"warn\" => 3,\n        \"error\" => 4,\n        _ => 0,\n    }\n}\n\n/// 解析一行日志，返回 (级别, 消息)。格式不对返回 None。\nfn parse_line(line: &str) -> Option<(&str, &str)> {\n    let mut parts = line.splitn(3, ' ');\n    let _ts = parts.next()?;\n    let level = parts.next()?;\n    let msg = parts.next()?;\n    // 级别必须是已知级别之一，否则这行格式不对（比如 \"garbage line ...\"）\n    if msg.is_empty()\n        || !matches!(\n            level.to_ascii_lowercase().as_str(),\n            \"trace\" | \"debug\" | \"info\" | \"warn\" | \"error\"\n        )\n    {\n        return None;\n    }\n    Some((level, msg))\n}\n\nfn analyze(path: &Path, min_level: &str) -> Result<Stats> {\n    let text =\n        fs::read_to_string(path).with_context(|| format!(\"无法读取日志文件 {}\", path.display()))?;\n    let mut stats = Stats::default();\n    let threshold = level_rank(min_level);\n\n    for line in text.lines() {\n        stats.total += 1;\n        let Some((level, msg)) = parse_line(line) else {\n            stats.skipped += 1;\n            continue;\n        };\n        if level_rank(level) < threshold {\n            stats.skipped += 1;\n            continue;\n        }\n        *stats.by_level.entry(level.to_string()).or_insert(0) += 1;\n        *stats.by_message.entry(msg.to_string()).or_insert(0) += 1;\n    }\n    Ok(stats)\n}\n\nfn print_text(stats: &Stats, file: &Path) {\n    println!(\n        \"文件：{}（共 {} 行，跳过 {} 行）\",\n        file.display(),\n        stats.total,\n        stats.skipped\n    );\n    println!(\"--- 按级别 ---\");\n    let mut levels: Vec<_> = stats.by_level.iter().collect();\n    levels.sort_by_key(|(l, _)| level_rank(l));\n    for (level, n) in levels {\n        println!(\"{level:>6}: {n}\");\n    }\n    println!(\"--- 出现最多的消息 ---\");\n    let mut msgs: Vec<_> = stats.by_message.iter().collect();\n    msgs.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));\n    for (msg, n) in msgs.iter().take(5) {\n        println!(\"{n:>4} 次  {msg}\");\n    }\n}\n\nfn print_json(stats: &Stats) -> Result<()> {\n    let out = serde_json::json!({\n        \"total\": stats.total,\n        \"skipped\": stats.skipped,\n        \"by_level\": stats.by_level,\n        \"top_messages\": stats.by_message.iter()\n            .map(|(m, n)| serde_json::json!({\"message\": m, \"count\": n}))\n            .collect::<Vec<_>>(),\n    });\n    println!(\"{}\", serde_json::to_string_pretty(&out)?);\n    Ok(())\n}\n\nfn run() -> Result<()> {\n    let mut args = Args::parse();\n\n    // 配置文件优先于命令行默认值：有配置就覆盖。\n    if let Some(cfg_path) = &args.config {\n        let raw = fs::read_to_string(cfg_path)\n            .with_context(|| format!(\"配置文件 {}\", cfg_path.display()))?;\n        let cfg: Config = serde_json::from_str(&raw)\n            .with_context(|| format!(\"配置文件 {} 不是合法 JSON\", cfg_path.display()))?;\n        if let Some(l) = cfg.min_level {\n            args.level = l;\n        }\n        if let Some(f) = cfg.format {\n            args.format = f;\n        }\n    }\n\n    let stats = analyze(&args.file, &args.level)?;\n    match args.format.as_str() {\n        \"json\" => print_json(&stats)?,\n        _ => print_text(&stats, &args.file),\n    }\n    Ok(())\n}\n\nfn main() {\n    if let Err(e) = run() {\n        // anyhow 的 {:?} 会打印错误链：外层 context + 内层原因。\n        eprintln!(\"错误：{e:?}\");\n        std::process::exit(1);\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "运行方法",
+          "code": "cargo run -- --file sample.log\ncargo run -- --file sample.log --level warn\ncargo run -- --file sample.log --level warn --format json\ncargo run -- --file sample.log --config config.json\ncargo run -- --file /no/such.log; echo \"exit=$?\"",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出（已在本机 cargo run 验证通过，cargo clippy 零警告、cargo fmt 通过）：默认运行共 12 行、跳过 1 行，TRACE 1、DEBUG 1、INFO 5、WARN 2、ERROR 2，最常见的消息是 request handled（3 次）、failed to open /var/log/app.log（2 次）、slow query: 120ms（2 次）；--level warn 时只剩 WARN 2、ERROR 2，跳过 8 行；--format json 输出同一份统计的 JSON（含 total 12、skipped 8、by_level 与 top_messages）；--config config.json 的输出与 --level warn 相同；不存在的文件打印错误链“无法读取日志文件 /no/such.log / Caused by: No such file or directory (os error 2)”，退出码为 1。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证两点：把 with_context 删掉再跑一次不存在的文件，对比错误信息少了哪一句；把 eprintln! 里的 {:?} 改成 {e} 再跑一次，看错误链是不是只剩最外层。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "加一个 --top N 参数（默认 5）：控制“出现最多的消息”输出前 N 条。想一想：这个参数应该是什么类型（usize 还是 String）？如果用户传 --top abc，clap 会在什么时候、以什么方式报错？",
+            "修复优先级问题：现在配置文件会覆盖命令行显式传的值。改成正确的优先级“命令行显式值 > 配置文件 > 默认值”。提示：把 --level 和 --format 的 default_value 去掉、字段改成 Option<String>，解析完命令行后按“命令行有值就用命令行的、没有就看配置、再没有才用默认值”的顺序合并。",
+            "把 analyze 里的统计逻辑抽成一个纯函数 fn count_lines(text: &str, min_level: &str) -> Stats（不读文件、只算字符串），让 analyze 只负责读文件 + 调用它；再写两个单元测试：parse_line 对正常行返回 Some、对垃圾行返回 None；count_lines 对一小段样例文本算出正确的各级别条数。跑 cargo test 通过。",
+            "加一个 --since HH:MM 参数：只统计时间戳不早于该时刻的行（日志时间戳形如 2026-11-07T08:00:04Z，比较 HH:MM 子串即可，不用引入 chrono）。验收：--since 08:05 时 request handled 的次数从 3 变成 1。",
+            "跑 cargo clippy -- -D warnings 与 cargo fmt --check，全部通过。"
+          ],
+          "verification": "--top 2 只输出两条最常见的消息；同时传 --level error --config config.json 时输出只有 ERROR（命令行获胜）；cargo test 至少两个测试通过；--since 08:05 时 request handled 出现 1 次；clippy 零警告、fmt 通过。"
+        },
+        {
+          "kind": "heading",
+          "text": "收尾建议（周末多出来的时间）"
+        },
+        {
+          "kind": "paragraph",
+          "text": "把 logcli 用到一份真实日志上：比如 cargo 自己的输出、或者 /var/log 里的一份日志（注意行格式可能不同，先改 parse_line 适配）。真实数据会立刻暴露示例里藏起来的假设（比如级别大小写、时间戳格式、多空格分隔）。给项目写一个 10 行左右的 README：用法、示例、已知限制（比如“只支持 时间 级别 消息 三段式行”）。第 11–12 周毕业项目也要写 README，现在就是练手。最后在清单文件里给第 2 周打勾，记一句本周卡点（比如“配置文件优先级一开始写反了”或“HashMap 输出顺序要先排序”）。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸阅读（官方免费资源）：The Rust Programming Language 第 12 章（一个 I/O 项目：构建命令行程序）、第 13 章（函数式语言特性：迭代器与闭包——下一周写项目 2 会用到）；clap 官方文档的 derive 教程；serde 官方文档的 derive 入门；Rustlings error_handling 组收尾。"
+        },
+        {
+          "kind": "heading",
+          "text": "自测题"
+        },
+        {
+          "kind": "paragraph",
+          "text": "答案可在网站上展开查看。"
+        }
+      ],
+      "checklist": [
+        "能说清 clap / serde / anyhow 各自解决什么问题，以及 derive 宏在编译期展开",
+        "示例工程在本机 cargo run 通过，四种运行方式的输出与预期一致，错误路径退出码为 1 且错误链完整",
+        "能解释 ? 在 Result 与 Option 上的含义、with_context 的作用、anyhow 与 thiserror 的分界",
+        "跟练任务完成：--top、优先级修复、单元测试、--since 都通过，clippy 零警告、fmt 通过",
+        "项目 1 已成型：能用自己的 CLI 分析一份真实日志文件（如 ~/.cargo 的日志或系统日志），并说出一条从输出里发现的结论"
+      ],
+      "dayNumber": 13,
+      "goal": "用 clap + serde + anyhow 写出一个真正能用的日志分析 CLI，全程不用 unwrap 硬撑，错误都带上下文。",
+      "lessonDate": "2026-11-07",
+      "quiz": [
+        {
+          "a": "derive 宏在编译期展开成普通 Rust 代码，运行期没有任何反射开销；类型错误在编译期就暴露。拼错参数名时 clap 在运行期检测并报错，还会提示相近的正确参数名（did you mean '--level'），C 里这部分要自己写字符串比较和提示。",
+          "q": "clap 的 derive(Parser) 是编译期还是运行期工作？它和 C 语言里手写 getopt 循环相比，错误处理（比如用户拼错参数名）由谁负责？"
+        },
+        {
+          "a": "anyhow::Result<T> 是 Result<T, anyhow::Error> 的别名，错误类型统一、能装任何实现了 Error 的错误，? 不用写 From 转换就能上传；标准库 Result 的错误类型是泛型 E，需要调用方明确指定。? 在 Result 上是“Err 时提前返回错误”，在 Option 上是“None 时提前返回 None”。",
+          "q": "anyhow 的 Result<T> 和标准库的 Result<T, E> 有什么区别？? 运算符在 Option 和 Result 上都能用，它在两种类型上分别是什么意思？"
+        },
+        {
+          "a": "with_context 给错误挂上“哪一步、哪个文件”的人话上下文，形成错误链；不加它用户只看到 No such file or directory (os error 2)，不知道是哪个文件、在哪一步失败。{e:?} 打印整条错误链（外层 context + 内层 Caused by），{e} 只打印最外层。",
+          "q": "with_context 解决了什么问题？如果不加它，用户看到“不存在的文件”报错时会少了哪条信息？{e:?} 和 {e} 打印 anyhow 错误时有什么区别？"
+        },
+        {
+          "a": "anyhow 适合应用程序：错误只管往上抛、最后统一打印，不用定义错误类型；thiserror 适合库：定义自己的错误 enum、每个变体写清 Display，让调用方能 match 具体错误做不同处理。库用 anyhow 会让调用方无法区分错误种类；应用为每个错误定义 enum 是不必要的样板代码。",
+          "q": "anyhow 和 thiserror 各适合什么场景？为什么库不应该用 anyhow、应用程序不应该为每个错误都定义一个 enum？"
+        },
+        {
+          "a": "只有一个输入引用（line: &str），省略规则 2 自动把输出生命周期绑到输入上，不用写标注。Stats 要活到函数返回之后、不能借用临时读入的文本，所以必须持有 String；规则是“短暂解析用借用、长期保存用持有”。",
+          "q": "parse_line 返回的 (&str, &str) 为什么不需要写生命周期标注？Stats 里存的是 String 而不是 &str，这个取舍背后的规则是什么？"
+        }
+      ],
+      "summary": "第 2 周项目实操：clap + serde + anyhow 拼成日志分析 CLI，derive 宏、? 传播与错误链一次落地。",
+      "title": "项目 1 实操：日志分析 CLI",
+      "weekNumber": 2
     }
   ]
 }
