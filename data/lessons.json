@@ -2448,6 +2448,197 @@
       "summary": "第 2 周项目实操：clap + serde + anyhow 拼成日志分析 CLI，derive 宏、? 传播与错误链一次落地。",
       "title": "项目 1 实操：日志分析 CLI",
       "weekNumber": 2
+    },
+    {
+      "dayNumber": 14,
+      "weekNumber": 2,
+      "title": "第二周复盘：类型系统与错误处理自测",
+      "lessonDate": "2026-11-08",
+      "goal": "把第二周五个知识点压成一张对照表、辨清四个易混概念，验收工程四项全过，项目 1 收尾、Rustlings 第二周组清完。",
+      "summary": "第二周收官：enum、集合、错误处理、泛型与 trait、生命周期五天知识点一次串起来验收，项目 1 收尾、Rustlings 第二周组清完。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "第二周主线速查",
+              "minutes": "10",
+              "detail": "读核心讲解第 1 节，对照表自查：盖住右列，看着左列能不能说出右列"
+            },
+            {
+              "label": "四个易混概念辨析",
+              "minutes": "15",
+              "detail": "Option 与 null、? 的两副面孔、HashMap 无序、生命周期标注的真相"
+            },
+            {
+              "label": "代码验证与自测",
+              "minutes": "20",
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），做跟练与自测题"
+            },
+            {
+              "label": "Rustlings 清关与项目收尾",
+              "minutes": "15",
+              "detail": "清关第二周 Rustlings 组、给项目 1 写 README、在清单里给第 2 周打勾"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 第二周主线速查：五天其实是「让错误在编译期现形」的五种手段"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 1 周讲的是「谁拥有数据」，第 2 周讲的是「怎么表达不确定性和变化」——enum、集合、错误处理、泛型、生命周期，五个知识点其实在回答同一个问题：一段代码里有哪些情况可能发生，编译器能不能在运行之前就替你把每种情况都检查一遍。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "第 8 天 enum 与模式匹配：enum 把「有限种可能」写成类型，match 强制你处理每一种，漏了就编译不过。项目 1 落点：level_rank 用 match 把级别字符串映射成数字；match args.format.as_str() 决定输出格式。",
+            "第 9 天 集合：Vec、String、HashMap：集合是「数量不定的数据」的容器，HashMap 的键要能哈希、能判等；entry().or_insert() 是计数惯用写法。项目 1 落点：HashMap<String, u64> 存「级别→条数」和「消息→次数」；输出前先收集成 Vec 再排序，因为 HashMap 无序。",
+            "第 10 天 错误处理：Option、Result、?：「可能没有」用 Option，「可能失败」用 Result；? 是提前返回的语法糖，在 Option 上返回 None、在 Result 上返回 Err。项目 1 落点：parse_line 返回 Option，格式不对就 None；analyze 返回 Result，读文件失败就 ? 上抛；let-else 处理 None。",
+            "第 11 天 泛型与 trait：泛型是「类型参数」，trait 是「能力契约」；抽象靠 trait 加组合，不靠继承。项目 1 落点：Args::parse() 是 Parser trait 的方法；serde_json::from_str::<Config> 靠目标类型推断类型参数；fs::read_to_string 接受任何 AsRef<Path>。",
+            "第 12 天 生命周期：生命周期是「借用能活多久」的标注；只有一个输入引用时省略规则自动推断；长期保存用持有、短暂解析用借用。项目 1 落点：parse_line 返回的 (&str, &str) 借用输入，靠省略规则不用写标注；Stats 里存 String 而不是 &str，因为统计结果要活到函数返回之后。",
+            "第 13 天 项目 1 实操：五个知识点第一次合体：clap 管解析、serde 管配置、anyhow 管错误传播。完整 logcli：参数解析、配置覆盖、逐行解析、两种输出、错误链。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "自查方法：盖住上面列表的后半句，看着知识点名，能不能说出「一句话核心」和「项目 1 里的落点」。说不出来的那一行，就是今天要补的；补完再去做自测题。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 四个最容易混的概念辨析"
+        },
+        {
+          "kind": "heading",
+          "text": "（1）Option 不是「Rust 版的 null」，它是「把有没有写进类型里」"
+        },
+        {
+          "kind": "paragraph",
+          "text": "C 语言里指针可以是 NULL，函数返回指针时调用方不知道它会不会是空，只能靠文档和约定；忘了判空就是段错误。Rust 的 Option<T> 把「可能没有」变成了类型的一部分：Some(T) 或者 None，调用方必须用 match、if let、? 之类的方式处理 None，否则连编译都过不了。parse_line 返回 Option<(&str, &str)> 就是这个意思——格式不对不是「返回一个空指针让你猜」，而是类型本身就告诉你「这一步可能没有结果」。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "常见的误解是把 unwrap 当成「先取出来再说」。unwrap 的意思是「我断定这里一定是 Some/Ok，错了就 panic」。在原型里图省事用 unwrap，等于把编译器好不容易替你拦住的「可能没有」又亲手放回了运行期。判断标准：只有「按逻辑不可能失败」的地方才用 unwrap/expect（比如测试、刚刚校验过的输入）；用户输入、文件、网络这些真正会失败的输入，一律用 ? 或 match。"
+        },
+        {
+          "kind": "heading",
+          "text": "（2）? 有两副面孔，看它站在哪个类型上"
+        },
+        {
+          "kind": "paragraph",
+          "text": "? 在 Result<T, E> 上是「Err 时提前返回这个 Err」；在 Option<T> 上是「None 时提前返回 None」。同一个符号、两种含义，分辨方法只看函数的返回类型：函数返回 Result，? 就是传错误；函数返回 Option，? 就是传空缺。parse_line 里 parts.next()? 的 ? 就是 Option 版——某一部分取不到，整个函数直接返回 None，连后面的判断都不跑。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "还有一个细节：? 会做类型转换。Result<T, E> 上的 ? 要求错误类型能通过 From 转成函数的错误类型，这就是为什么 anyhow 的 Result 能直接 ? 上 io::Error 和 serde_json::Error——anyhow::Error 实现了从所有 Error 类型的 From。而今天示例里的 Box<dyn Error> 也一样：Box<dyn Error> 实现了从任何 Error 类型的 From，所以 ? 照样能用，只不过它没有 anyhow 的 with_context 和错误链打印。"
+        },
+        {
+          "kind": "heading",
+          "text": "（3）HashMap 没有顺序，顺序要自己造"
+        },
+        {
+          "kind": "paragraph",
+          "text": "HashMap 的迭代顺序是不确定的——同一份数据两次运行可能顺序不同，插入顺序更不能指望。这是哈希表的本性：键先被哈希再落桶，桶的顺序和插入顺序无关。项目 1 里「按级别输出」和「最常见的消息前 N 条」都不是靠 HashMap 自己排的，而是先把键值对收集成 Vec 再排序。想按级别顺序输出，有两种做法：像今天示例这样手写一个变体数组 [Trace, Debug, Info, Warn, Error] 按顺序查表；或者给级别类型 derive Ord，收集后按 key 排序。前者直观、后者通用，项目 1 用的是后一种思路（按 level_rank 排序）。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "一个顺带的好处：HashMap<String, u64> 的键如果是 String，map.get(\"INFO\") 照样能用——因为 String 实现了 Borrow<str>，get 接受任何能借用成键类型的引用。这就是第 11 天讲的 trait 在标准库里的日常用法。"
+        },
+        {
+          "kind": "heading",
+          "text": "（4）生命周期标注不是「加了就安全」，它是「把借用关系说清楚」"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 12 天讲过：生命周期标注不改变任何运行期行为，它只是编译器用来验证「借用活得够久」的记号。今天示例里的 fn parse_line(line: &str) -> Option<Entry<'_>> 一个标注都没写全——'_ 是匿名生命周期，意思是「输出的借用和输入活得一样久」。它能成立靠的是省略规则 2：只有一个输入引用时，输出的生命周期就绑到它身上。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "反过来，标注本身不会让一段错误的代码通过。经典的反例是返回局部变量的引用：fn first_word_bad() -> &str { let s = String::from(\"hello\"); &s } 会报 E0515——返回了局部变量的引用，s 在函数结束时就被释放了。这里无论怎么写标注都救不了，因为问题不在「标注没写对」，而在「借用的东西活得不够久」。修法只有两条路：返回持有的数据（String，把所有权交出去），或者让调用方把数据传进来、函数只返回借用——这正是第 12 天「长期保存用持有、短暂解析用借用」的取舍，也是 Stats 里存 String 而 parse_line 返回 &str 的原因。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. anyhow 与 Box<dyn Error>：今天示例为什么不用 anyhow"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 13 天的结论是：应用程序用 anyhow、库用 thiserror。今天的验收工程用的是 Box<dyn Error>，不是推翻这个结论，而是因为今天的工程没有引入任何依赖、也不需要给错误加上下文——run() 返回 Result<(), Box<dyn Error>>，? 照样能把 io::Error 传上来，main 里打印一句就够了。三者的分工可以这样记：anyhow 是应用程序的标准答案，错误类型统一、能挂 with_context、打印时 {:?} 能打出整条错误链，项目 1 和以后的毕业项目都用它；Box<dyn Error> 是无依赖的轻量答案，适合今天这种单文件验收工程，或者写给别人看的最小示例，缺点是错误信息只有最外层，没有上下文链；thiserror 是库的标准答案，定义自己的错误 enum，让调用方能 match 具体错误做不同处理。判断标准还是第 13 天那句：错误是「自己消化、最后打印」就用 anyhow（或临时的 Box<dyn Error>）；错误是「交给调用方判断」就用 thiserror。"
+        },
+        {
+          "kind": "callout",
+          "text": "今天不做的事：不提前学第 3 周的内容。第 3 周是智能指针（Box / Rc / Arc）、内部可变性、Send / Sync、线程与 channel。今天如果 Rustlings 提前刷到相关组，看到不懂的题先跳过、记进卡点清单，不要今天就开新课。周日验收课的任务是「把第二周收干净」，不是「把第三周提前学完」。清单第二周的验收句是三条：项目 1 能跑、错误处理不用 unwrap 硬撑、clippy 零警告——对照它自查，达标就收工。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑。它把本周五个知识点串在一个程序里：enum（Level）+ 模式匹配、HashMap 计数、Option/Result 与 ?、泛型函数 count_by、生命周期（Entry<'a> 只借用不复制）。先建工程：cargo new rust-day14 --bin，然后把 src/main.rs 换成下面这份完整代码（无外部依赖，不用联网下载任何 crate）。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "/// 第 14 天 · 第二周复盘验收：enum、集合、错误处理、泛型、生命周期一次串起来。\nuse std::collections::HashMap;\nuse std::error::Error;\nuse std::fmt;\n\n#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]\nenum Level {\n    Trace,\n    Debug,\n    Info,\n    Warn,\n    Error,\n}\n\nimpl Level {\n    fn from_str(s: &str) -> Option<Level> {\n        match s.to_ascii_lowercase().as_str() {\n            \"trace\" => Some(Level::Trace),\n            \"debug\" => Some(Level::Debug),\n            \"info\" => Some(Level::Info),\n            \"warn\" => Some(Level::Warn),\n            \"error\" => Some(Level::Error),\n            _ => None,\n        }\n    }\n}\n\nimpl fmt::Display for Level {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        let name = match self {\n            Level::Trace => \"TRACE\",\n            Level::Debug => \"DEBUG\",\n            Level::Info => \"INFO\",\n            Level::Warn => \"WARN\",\n            Level::Error => \"ERROR\",\n        };\n        write!(f, \"{name}\")\n    }\n}\n\n/// 一条解析后的日志：message 只借用原始文本，不复制。\n#[derive(Debug)]\nstruct Entry<'a> {\n    level: Level,\n    message: &'a str,\n}\n\n/// 只有一个输入引用，省略规则自动把输出生命周期绑到输入上。\n/// `'_` 是匿名生命周期：输出的借用和输入活得一样久。\nfn parse_line(line: &str) -> Option<Entry<'_>> {\n    let mut parts = line.splitn(3, ' ');\n    let _ts = parts.next()?;\n    let level = Level::from_str(parts.next()?)?;\n    let message = parts.next()?;\n    Some(Entry { level, message })\n}\n\n/// 泛型统计：对任意切片按 key 函数分组计数。\n/// K 必须满足 Eq + Hash，否则 HashMap 没法用它当键。\nfn count_by<T, K>(items: &[T], key: impl Fn(&T) -> K) -> HashMap<K, usize>\nwhere\n    K: Eq + std::hash::Hash,\n{\n    let mut map = HashMap::new();\n    for item in items {\n        *map.entry(key(item)).or_insert(0) += 1;\n    }\n    map\n}\n\nconst SAMPLE: &str = \"\\\n2026-11-08T09:00:01Z INFO server started\n2026-11-08T09:00:02Z INFO request handled\n2026-11-08T09:00:03Z WARN slow query\n2026-11-08T09:00:04Z ERROR disk full\n2026-11-08T09:00:05Z INFO request handled\ngarbage line\n2026-11-08T09:00:06Z DEBUG cache hit\n2026-11-08T09:00:07Z WARN slow query\";\n\nfn run() -> Result<(), Box<dyn Error>> {\n    let entries: Vec<Entry> = SAMPLE.lines().filter_map(parse_line).collect();\n    println!(\n        \"解析成功 {} 条（共 {} 行）\",\n        entries.len(),\n        SAMPLE.lines().count()\n    );\n\n    // 按级别计数：HashMap 本身无序，想按级别顺序输出就按变体数组遍历。\n    let by_level = count_by(&entries, |e| e.level);\n    println!(\"--- 按级别 ---\");\n    for level in [\n        Level::Trace,\n        Level::Debug,\n        Level::Info,\n        Level::Warn,\n        Level::Error,\n    ] {\n        let n = by_level.get(&level).copied().unwrap_or(0);\n        println!(\"{level:>6}: {n}\");\n    }\n\n    // 按消息计数：次数降序、消息升序，保证输出确定。\n    let by_message = count_by(&entries, |e| e.message);\n    let mut msgs: Vec<_> = by_message.iter().collect();\n    msgs.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));\n    println!(\"--- 出现最多的消息 ---\");\n    for (msg, n) in msgs {\n        println!(\"{n:>4} 次  {msg}\");\n    }\n\n    // 错误路径演示：Box<dyn Error> 也能用 ?，只不过没有 anyhow 的上下文链。\n    match std::fs::read_to_string(\"no-such-file.txt\") {\n        Ok(_) => println!(\"意外：文件竟然存在\"),\n        Err(e) => println!(\"错误演示：读取 no-such-file.txt 失败：{e}\"),\n    }\n    Ok(())\n}\n\nfn main() {\n    if let Err(e) = run() {\n        eprintln!(\"错误：{e}\");\n        std::process::exit(1);\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn parse_line_ok_and_garbage() {\n        let e = parse_line(\"2026-11-08T09:00:01Z INFO hello\").unwrap();\n        assert_eq!(e.level, Level::Info);\n        assert_eq!(e.message, \"hello\");\n        assert!(parse_line(\"garbage line\").is_none());\n        assert!(parse_line(\"2026-11-08T09:00:01Z FATAL boom\").is_none());\n    }\n\n    #[test]\n    fn count_by_groups_levels() {\n        let entries: Vec<Entry> = SAMPLE.lines().filter_map(parse_line).collect();\n        let by_level = count_by(&entries, |e| e.level);\n        assert_eq!(by_level.get(&Level::Info).copied().unwrap_or(0), 3);\n        assert_eq!(by_level.get(&Level::Warn).copied().unwrap_or(0), 2);\n        assert_eq!(by_level.get(&Level::Trace).copied().unwrap_or(0), 0);\n    }\n\n    #[test]\n    fn level_ordering_matches_severity() {\n        assert!(Level::Error > Level::Warn);\n        assert!(Level::Warn > Level::Info);\n        assert!(Level::Info > Level::Debug);\n    }\n}"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run\ncargo test\ncargo clippy -- -D warnings\ncargo fmt --check"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出（确定性输出，与环境无关）：解析成功 7 条（共 8 行）；按级别 TRACE: 0、DEBUG: 1、INFO: 3、WARN: 2、ERROR: 1；出现最多的消息：request handled 2 次、slow query 2 次、cache hit / disk full / server started 各 1 次；最后打印「错误演示：读取 no-such-file.txt 失败：No such file or directory (os error 2)」。cargo test 应报告 3 passed；cargo clippy -- -D warnings 与 cargo fmt --check 应静默通过（无输出即通过）。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "动手验证两点：把 count_by 签名里的 K: Eq + std::hash::Hash 删掉，看编译器报什么错（提示：HashMap 的键必须满足这两个 trait bound）；把 parse_line 返回类型里的 '_ 改成显式的 'a 并给函数加上 <'a>，确认行为完全一样——'_ 只是「让编译器替你填」的写法。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "Rustlings 清关：跑 rustlings verify，把 enums、error_handling、generics、lifetimes 四组里剩余的题清完；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单（第 7 天的刷法同样适用：先读报错、再改代码，不先看答案）。",
+            "项目 1 收尾：把第 13 天跟练任务里的 --top、优先级修复、单元测试、--since 全部做完，跑 cargo clippy -- -D warnings 与 cargo fmt --check 零警告通过，再跑 cargo test；然后给 logcli 写一个 10 行左右的 README（用法、示例、已知限制），并用它分析一分真实日志，说出一条从输出里发现的结论。",
+            "默写第二周对照表：不看核心讲解第 1 节，凭记忆写出五天知识点的「一句话核心」和「项目 1 里的落点」，写完再对照原文补漏；漏掉超过两处就把那几天的资料重读一遍。",
+            "整理卡点清单并在清单文件里给第 2 周打勾：列出本周仍卡住的概念（不超过 10 条，每条写「卡在哪一行 + 对应的规则猜测」），在 Rust-12周学习清单.md 第二周下打勾并记一句本周卡点（比如「HashMap 输出顺序要先排序」或「? 在 Option 和 Result 上是两回事」）。"
+          ],
+          "verification": "Rustlings 第二周四组全部通过；验收工程 cargo run 输出与预期一致、cargo test 3 passed、clippy 零警告、fmt 通过；项目 1 跟练任务全部完成且 README 已写；能不查书写出第二周对照表并说清每条卡点对应的规则。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "Option<T> 和 C 语言里的 NULL 指针有什么本质区别？? 运算符在 Option 上和在 Result 上分别是什么意思，怎么判断当前是哪个？",
+          "a": "本质区别：NULL 是「一个值可以是空，但类型不告诉你」，调用方靠约定判空，忘了就段错误；Option 把「可能没有」写进类型，调用方必须处理 None 才能拿到值，编译器强制检查。? 在 Result 上是「Err 时提前返回错误」，在 Option 上是「None 时提前返回 None」；判断方法只看所在函数的返回类型——返回 Result 就是传错误，返回 Option 就是传空缺。"
+        },
+        {
+          "q": "HashMap 的迭代顺序能依赖吗？如果要按级别严重程度输出统计结果，有哪两种做法，各有什么适用场景？",
+          "a": "不能依赖。HashMap 的迭代顺序不确定，同一份数据两次运行可能不同，插入顺序也不能指望。两种做法：一是手写变体数组按顺序查表（直观、适合变体固定的小 enum，今天示例就是这种）；二是给级别类型 derive Ord，收集成 Vec 后按 key 排序（通用、适合变体多或需要复用的场景，项目 1 用的是按 level_rank 排序的同款思路）。"
+        },
+        {
+          "q": "为什么 fn parse_line(line: &str) -> Option<Entry<'_>> 不用写显式生命周期标注？'_ 是什么？如果返回类型改成 Option<Entry<'a>>，函数签名要怎么改？",
+          "a": "靠省略规则 2：只有一个输入引用时，输出的生命周期自动绑到它身上，不用写标注。'_ 是匿名生命周期，意思是「输出的借用和输入活得一样久」，让编译器替你填。改成显式写法是 fn parse_line<'a>(line: &'a str) -> Option<Entry<'a>>，行为完全一样。"
+        },
+        {
+          "q": "count_by 签名里的 K: Eq + std::hash::Hash 是什么作用？把它删掉会报什么错？这说明了泛型函数和 trait bound 之间是什么关系？",
+          "a": "它是 trait bound：声明「K 必须能判等、能哈希」，因为 HashMap 要用 K 当键，必须靠 Eq 判断键是否相同、靠 Hash 计算桶位置。删掉会报 E0277（trait bound 不满足），编译器会指出 HashMap<K, _> 要求 K: Eq + Hash。关系是：泛型函数用类型参数表示「任意类型」，trait bound 用来收窄「任意」到「满足这些能力」，没有 bound 的泛型几乎什么都干不了。"
+        },
+        {
+          "q": "fn main() -> Result<(), Box<dyn Error>> 和 fn main() 里用 ? 有什么区别？为什么项目 1 用 anyhow、今天的示例用 Box<dyn Error>、库又要用 thiserror？",
+          "a": "fn main() 返回 ()，里面不能用 ?（E0277：? 要求返回类型是 Result 或 Option）；fn main() -> Result<(), Box<dyn Error>> 返回 Result，里面可以用 ?，Err 时由运行时打印错误并以非零码退出。项目 1 用 anyhow 是因为应用程序需要错误链和上下文；今天示例用 Box<dyn Error> 是因为单文件验收工程无依赖、也不需要上下文；库用 thiserror 是因为调用方需要 match 具体的错误类型做不同处理，anyhow 会把错误种类藏起来。"
+        }
+      ],
+      "checklist": [
+        "能不查书写出第二周五个知识点的对照表（enum / 集合 / 错误处理 / 泛型与 trait / 生命周期），并各举一个项目 1 里的落点",
+        "验收工程在本机 cargo run 通过，输出与预期一致，cargo test 3 passed，clippy 零警告、fmt 通过",
+        "能解释 Option 与 null 的区别、? 在 Option 与 Result 上的两副面孔、HashMap 无序、生命周期省略规则",
+        "Rustlings 第二周四组（enums、error_handling、generics、lifetimes）全部通过，卡点清单已更新",
+        "项目 1 收尾完成：跟练任务全过、README 已写、clippy 零警告，能用自己的 CLI 分析一份真实日志并说出一条结论"
+      ]
     }
   ]
 }
