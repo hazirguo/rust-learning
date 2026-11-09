@@ -2639,6 +2639,206 @@
         "Rustlings 第二周四组（enums、error_handling、generics、lifetimes）全部通过，卡点清单已更新",
         "项目 1 收尾完成：跟练任务全过、README 已写、clippy 零警告，能用自己的 CLI 分析一份真实日志并说出一条结论"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读核心讲解第 1-2 节，对照 C++ 的 unique_ptr 理解 Box 的独占语义",
+              "label": "Box 是什么、为什么需要",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "读第 3-4 节：E0072 的读法、Box<dyn Trait> 与泛型的取舍",
+              "label": "递归类型与 trait 对象",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），动手改两处看报错",
+              "label": "代码验证",
+              "minutes": "20 分钟"
+            },
+            {
+              "detail": "做跟练任务与自测题，Rustlings 的 smart_pointers 组先刷 Box 部分",
+              "label": "跟练与自测",
+              "minutes": "15 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "今日目标"
+        },
+        {
+          "kind": "paragraph",
+          "text": "学完今天，你应该能：说清 Box 是什么、为什么需要它（递归类型、大结构体、trait 对象三种场景），读懂 E0072（递归类型无限大小）和 E0382（Box 被 move 后再用）这两类报错，区分 Box<dyn Trait> 的动态分发和泛型的静态分发。今天是第 3 周的第一课，也是智能指针三连的第一块：Box 管「独占的堆分配」，明天 Rc/RefCell 管「单线程共享」，后天 Arc/Mutex 管「多线程共享」——三块各管一个场景，不要混着用。"
+        },
+        {
+          "kind": "heading",
+          "text": "1. Box 是什么：堆上的独占指针，对位 C++ 的 unique_ptr"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Box<T> 是 Rust 里最简单的智能指针：一个指向堆上 T 的独占指针。栈上只留一个指针（64 位机器上 8 字节），数据本身在堆上；Box 离开作用域时，堆上的数据自动释放，不用手动 free，也不会 double free。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "如果你写过 C++，最贴切的对照是 std::unique_ptr<T>：两者都是独占、不可复制只能 move、离开作用域自动释放、都能表达动态多态（Box<dyn Trait> 对 unique_ptr<Base>）。关键区别：Box 不可能为空——「可能没有」用 Option<Box<T>> 表达（第 10 天）；而且 Box 没有引入任何新规则，第 2 天学过的 move、借用、Drop 对 Box 一字不改地适用。let moved = boxed; 之后 boxed 不能再用，报的还是熟悉的 E0382，不是新规则。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Box 的三个基本操作今天就要形成肌肉记忆：Box::new(42) 在堆上放一个 i32，b 是栈上的指针；*b 解引用拿到 42；也可以把堆里的数据 move 出来（i32 是 Copy 类型）。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 为什么需要 Box：三种绕不过去的场景"
+        },
+        {
+          "kind": "heading",
+          "text": "场景一：递归类型——没有 Box，编译器连大小都算不出来"
+        },
+        {
+          "kind": "paragraph",
+          "text": "表达式树就是典型：enum Expr { Num(i64), Add(Box<Expr>, Box<Expr>), Mul(Box<Expr>, Box<Expr>) }。如果把 Box<Expr> 写成直接的 Expr，编译器会报 E0072：recursive type Expr has infinite size。读法是这样的：编译器要在编译期知道每个类型占多少字节，Expr 包含 Expr、又包含 Expr……这个嵌套没有尽头，大小是无限的。Box 把它打断了：Box<Expr> 的大小永远是 8 字节（一个指针），无论里面的 Expr 多大，递归就有了确定的落点。C 语言里链表节点写 struct Node *next 而不是 struct Node next，是同一个道理——指针是定长的，值不是。判断标准：只要一个类型直接或间接包含自身，就必须在某个环节用 Box（或引用、Rc 等定长指针）打断。链表、树、表达式求值器、JSON 的 Value 类型，全是这个模式。Firecracker 和 Cloud Hypervisor 源码里的设备树、配置树同样靠 Box 定型，第 9 周读源码时会反复见到。"
+        },
+        {
+          "kind": "heading",
+          "text": "场景二：大结构体——move 只搬指针，不搬数据"
+        },
+        {
+          "kind": "paragraph",
+          "text": "示例里的 BigBuffer 有 256KB 数据。直接放在栈上、作为函数参数或返回值传递时，每次 move 都要复制 256KB；装进 Box 之后，move 的成本永远是 8 字节指针。size_of_val(&big) 打印出来就是 8，验证了这一点。顺带一个容易混的点：Box<T> 本身在栈上占 8 字节，T 在堆上占 size_of::<T>() 字节。Vec<T>、String 也是同样的「栈上小、堆上大」结构——Vec 是 24 字节（指针+长度+容量），String 也是 24 字节。"
+        },
+        {
+          "kind": "callout",
+          "text": "C++ 程序员最容易踩的坑：Box::new(值) 是先把值造出来、再搬进堆，而不是直接在堆上造。今天验证时就撞上了：第一次写的是 1MB 的数组，cargo run（主线程 8MB 栈）能跑，但 cargo test（测试线程默认 2MB 栈）在构造 [fill; 1024 * 1024] 这一步就栈溢出了——数组字面量先在栈上求值，1MB 的临时值加上调用帧超出了测试线程的栈，改成 256KB 后四项检查才全过。对照 C++：std::make_unique<Big>(...) 是直接在堆上原地构造，没有这个中间步骤；Rust 的 Box::new 没有 placement new 的等价物（稳定版没有），值总要先在栈上出现一次。实战结论：Box 解决的是「move 成本」和「大小不确定」，不是「构造过程不占栈」；超大数组不要用数组字面量直接 Box::new，改用 vec![...].into_boxed_slice() 或 Box::new_zeroed 再填充——第 7 周讲 unsafe 时会回到这个话题。"
+        },
+        {
+          "kind": "heading",
+          "text": "场景三：trait 对象——运行时才知道具体类型"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Vec<Box<dyn Shape>> 里可以同时装圆和矩形，调用 area() 时按实际类型分发。这是第 11 天泛型的另一面：泛型是「编译期为每种类型生成一份代码」（静态分发、零成本、但类型必须在编译期确定）；Box<dyn Trait> 是「编译期只留一个指向虚表的指针，运行期再查表」（动态分发、有一次间接跳转的成本、但能装不同类型）。取舍标准很直白：类型在编译期就能确定、且追求性能，用泛型；类型要到运行期才知道（比如从配置文件读出「画圆形还是画矩形」、插件系统加载不同实现），用 Box<dyn Trait>。第 11 周毕业项目 B（出站网关）的策略配置和 C（Wasmtime 插件宿主）都会用到 trait 对象，今天先把手感建立起来。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. Box 的三条规则：独占、move 只搬指针、Drop 自动释放"
+        },
+        {
+          "items": [
+            "独占：一个 Box 只有一个所有者。clone() 存在，但它是深拷贝——复制整份堆上数据，不是复制指针。想共享所有权的是明天的 Rc，今天不要拿 Box 硬凑。",
+            "move 只搬指针：let big2 = big; 之后 big 失效，但堆上的 256KB 数据一次都没复制过。函数参数和返回值同理：fn new(fill: u8) -> Box<Self> 返回 Box 时，搬的只是指针。",
+            "Drop 自动释放：Box 离开作用域，堆上数据先 Drop（递归地释放内部的 Box、String、Vec……），再释放堆内存。表达式树 expr 整个被 Drop 时，整棵树从叶子到根依次释放，不用写一行清理代码——这是第 2 天「所有权即生命周期」的直接推论。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 解引用与 Deref 强制转换：Box 用起来像 T 本身"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Box 实现了 Deref<Target = T>，所以：*boxed 拿到堆里的数据；boxed.method() 可以直接调 T 的方法（自动解引用）；&Box<String> 可以传给要 &str 的地方：编译器沿着 &Box<String> → &String → &str 自动转换，这就是 Deref 强制转换（deref coercion）。示例最后一行就是这个：let name_ref: &str = &name_box;。注意它只在「引用」之间发生：Box<String> 不能直接当 String 用（那是 move，不是借用）；&Box<T> 能当 &T 用，&mut Box<T> 能当 &mut T 用。String、Vec<T>、Box<T>、Rc<T> 都是靠同一套 Deref 机制「透明」起来的，第 16 天讲 Rc 时还会再遇到。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 常见误解与报错读法"
+        },
+        {
+          "items": [
+            "误解一：「用了 Box 就不用管借用检查了。」错。Box 只是把数据挪到堆上，所有权和借用规则一分不少。&Box<T> 和 &mut Box<T> 照样受「同一时刻要么多个不可变借用、要么一个可变借用」的约束；想在多个地方同时可变地访问同一份数据，要的是明天的 Rc<RefCell<T>>（单线程）或后天的 Arc<Mutex<T>>（多线程），不是 Box。",
+            "误解二：「Box::new 能省内存。」不能。Box 只是换了存放位置：数据从栈上搬到堆上，总量不变，还多了一个指针和一次堆分配。省的是「栈空间」和「move 成本」，不是内存总量。无脑给所有变量套 Box 只会更慢——堆分配本身有成本，小数据直接放栈上才是对的。",
+            "E0072 recursive type has infinite size：类型直接或间接包含自身且没有指针打断。在包含自身的那一层包一层 Box（或 &、Rc），让编译器能算出固定大小。",
+            "E0382 use of moved value：Box 被 move 后原变量失效。示例里被注释掉的那行 println!(\"{boxed}\") 取消注释就会报这个错——修法是 move 之前先借用（&boxed），或者 clone（深拷贝，想清楚再用）。",
+            "E0308 mismatched types：今天验证时也撞上一次——结构体字段改成 [u8; 256 * 1024] 后，构造处的字面量还是 [fill; 1024 * 1024]，类型对不上。读法：看报错里 expected 和 found 各自的大小，改小的一边。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "callout",
+          "text": "今天不做的事：Rc / RefCell（明天第 16 天）、Arc / Mutex / Send / Sync（第 17 天）、Box::leak、Box::into_raw / from_raw（把 Box 变成裸指针、绕过所有权系统，属于 unsafe，第 7 周讲 unsafe 边界时再碰）。也不要满屏 Box：清单里的提醒今天就生效——如果发现自己到处写 Box，先停下来想想是不是所有权设计错了：能不能用引用、能不能用 Vec、是不是该换个结构。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test（4 passed）、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑。它把今天的五个点串在一个程序里：递归表达式树（E0072 的解法）、Box 的 move 语义、大结构体的指针 move、Box<dyn Trait> 动态分发、Deref 强制转换。先建工程："
+        },
+        {
+          "caption": "新建工程（无外部依赖，不用联网下载任何 crate）",
+          "code": "cargo new rust-day15 --bin\ncd rust-day15",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "把 src/main.rs 换成下面这份完整代码："
+        },
+        {
+          "caption": "第 15 天完整示例：表达式树 + 大结构体 + trait 对象 + Deref 强制转换",
+          "code": "/// 第 15 天 · Box 智能指针：堆分配、递归类型与 trait 对象。\nuse std::fmt::Debug;\n\n/// 递归类型必须用 Box 打断，否则编译器报 E0072（无限大小）。\n#[derive(Debug)]\nenum Expr {\n    Num(i64),\n    Add(Box<Expr>, Box<Expr>),\n    Mul(Box<Expr>, Box<Expr>),\n}\n\nimpl Expr {\n    fn eval(&self) -> i64 {\n        match self {\n            Expr::Num(n) => *n,\n            Expr::Add(a, b) => a.eval() + b.eval(),\n            Expr::Mul(a, b) => a.eval() * b.eval(),\n        }\n    }\n\n    fn depth(&self) -> usize {\n        match self {\n            Expr::Num(_) => 1,\n            Expr::Add(a, b) | Expr::Mul(a, b) => 1 + a.depth().max(b.depth()),\n        }\n    }\n}\n\n/// trait 对象：Box<dyn Trait> 是「运行时才知道具体类型」的指针。\ntrait Shape: Debug {\n    fn area(&self) -> f64;\n    fn name(&self) -> &'static str;\n}\n\n#[derive(Debug)]\nstruct Circle {\n    r: f64,\n}\n\nimpl Shape for Circle {\n    fn area(&self) -> f64 {\n        std::f64::consts::PI * self.r * self.r\n    }\n    fn name(&self) -> &'static str {\n        \"圆\"\n    }\n}\n\n#[derive(Debug)]\nstruct Rect {\n    w: f64,\n    h: f64,\n}\n\nimpl Shape for Rect {\n    fn area(&self) -> f64 {\n        self.w * self.h\n    }\n    fn name(&self) -> &'static str {\n        \"矩形\"\n    }\n}\n\n/// 大结构体：放进 Box 后 move 只搬指针，不搬数据。\n#[derive(Debug)]\nstruct BigBuffer {\n    data: [u8; 256 * 1024],\n}\n\nimpl BigBuffer {\n    fn new(fill: u8) -> Box<Self> {\n        Box::new(Self {\n            data: [fill; 256 * 1024],\n        })\n    }\n\n    fn first(&self) -> u8 {\n        self.data[0]\n    }\n}\n\nfn main() {\n    // 1. 递归表达式树：(2 + 3) * 4\n    let expr = Expr::Mul(\n        Box::new(Expr::Add(Box::new(Expr::Num(2)), Box::new(Expr::Num(3)))),\n        Box::new(Expr::Num(4)),\n    );\n    println!(\"表达式：{expr:?}\");\n    println!(\"求值结果：{}（应为 20）\", expr.eval());\n    println!(\"树深：{}\", expr.depth());\n\n    // 2. Box 是独占所有权：move 只搬指针，旧变量失效。\n    let boxed = Box::new(42_i32);\n    println!(\n        \"Box 里的数据：{boxed}，Box 本身在栈上占 {} 字节\",\n        size_of_val(&boxed)\n    );\n    let moved = boxed;\n    // println!(\"{boxed}\"); // 编译错误 E0382：boxed 已被 move\n    println!(\"move 之后：{moved}\");\n\n    // 3. 大结构体放进 Box：move 成本是 8 字节指针，不是 256KB 数据。\n    let big = BigBuffer::new(7);\n    println!(\n        \"大缓冲区首字节：{}，Box 占 {} 字节\",\n        big.first(),\n        size_of_val(&big)\n    );\n    let big2 = big; // 只搬指针\n    println!(\"move 后首字节仍为：{}\", big2.first());\n\n    // 4. Box<dyn Trait>：不同类型装进同一个 Vec，运行时分发。\n    let shapes: Vec<Box<dyn Shape>> = vec![\n        Box::new(Circle { r: 2.0 }),\n        Box::new(Rect { w: 3.0, h: 4.0 }),\n        Box::new(Circle { r: 1.0 }),\n    ];\n    let mut total = 0.0;\n    for s in &shapes {\n        println!(\"{} 的面积：{:.2}\", s.name(), s.area());\n        total += s.area();\n    }\n    println!(\"总面积：{total:.2}\");\n\n    // 5. 解引用与 Deref 强制转换：&Box<T> 能当 &T 用。\n    let name_box = Box::new(String::from(\"hello\"));\n    let name_ref: &str = &name_box; // Deref 强制转换：&Box<String> -> &String -> &str\n    println!(\"解引用：{}，长度：{}\", *name_box, name_ref.len());\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn expr_eval_and_depth() {\n        let expr = Expr::Mul(\n            Box::new(Expr::Add(Box::new(Expr::Num(2)), Box::new(Expr::Num(3)))),\n            Box::new(Expr::Num(4)),\n        );\n        assert_eq!(expr.eval(), 20);\n        assert_eq!(expr.depth(), 3);\n        assert_eq!(Expr::Num(7).eval(), 7);\n        assert_eq!(Expr::Num(7).depth(), 1);\n    }\n\n    #[test]\n    fn big_buffer_moves_only_pointer() {\n        let big = BigBuffer::new(9);\n        assert_eq!(big.first(), 9);\n        assert_eq!(size_of_val(&big), size_of::<usize>());\n        let big2 = big;\n        assert_eq!(big2.first(), 9);\n    }\n\n    #[test]\n    fn trait_object_dispatch() {\n        let shapes: Vec<Box<dyn Shape>> = vec![\n            Box::new(Circle { r: 1.0 }),\n            Box::new(Rect { w: 2.0, h: 3.0 }),\n        ];\n        assert_eq!(shapes[0].name(), \"圆\");\n        assert_eq!(shapes[1].name(), \"矩形\");\n        let total: f64 = shapes.iter().map(|s| s.area()).sum();\n        assert!((total - (std::f64::consts::PI + 6.0)).abs() < 1e-9);\n    }\n\n    #[test]\n    fn deref_coercion_works() {\n        let name_box = Box::new(String::from(\"hello\"));\n        let name_ref: &str = &name_box;\n        assert_eq!(name_ref.len(), 5);\n        assert_eq!(*name_box, \"hello\");\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run、cargo test、cargo clippy -- -D warnings、cargo fmt --check。预期输出（确定性输出，与环境无关）：表达式 Mul(Add(Num(2), Num(3)), Num(4))，求值结果 20，树深 3；Box 里的数据 42，Box 本身在栈上占 8 字节，move 之后 42；大缓冲区首字节 7，Box 占 8 字节，move 后首字节仍为 7；圆的面积 12.57、矩形的面积 12.00、圆的面积 3.14，总面积 27.71；解引用 hello，长度 5。cargo test 应报告 4 passed；clippy 与 fmt 应静默通过。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 Expr::Add 里的 Box<Expr> 改成 Expr，看编译器报什么错（提示：E0072，recursive type has infinite size）；把 main 里被注释掉的 println!(\"{boxed}\") 取消注释，看 E0382 的完整报错；把 BigBuffer 的数组改回 [u8; 1024 * 1024] 再跑 cargo test，看测试线程栈溢出——然后改回来，体会「Box::new 先在栈上求值」这个细节。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "用 Box 写一个单链表：enum List { Nil, Cons(i32, Box<List>) }，实现 len()、sum()、push_front() 三个方法，再写两个测试（空链表长度 0、三个节点的和正确）。跑通 cargo test、clippy 零警告、fmt 通过。",
+            "给表达式树加一个减法变体 Sub(Box<Expr>, Box<Expr>)，在 eval 和 depth 里补上分支，再加一个测试验证 (10 - 4) * 2 = 12。体会「递归类型加变体时，Box 让改动只发生在枚举定义处」。",
+            "Rustlings：刷 smart_pointers 组里 Box 相关的题（Rc / RefCell 的题留到明天，不要提前做）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。",
+            "写一个 fn summarize(shapes: &[Box<dyn Shape>]) -> (usize, f64)，返回图形个数和总面积；再写一个泛型版 fn summarize_generic<T: Shape>(shapes: &[T]) -> (usize, f64)，对比两者：哪个能装混合类型、哪个在编译期就确定了类型、调用时传参有什么不同。把结论写进卡点清单。"
+          ],
+          "verification": "跟练 1、2 的测试全部通过且 clippy 零警告；能说清 E0072 的成因与修法、Box 与 unique_ptr 的异同、Box<dyn Trait> 与泛型的取舍；Rustlings smart_pointers 组的 Box 部分清完。"
+        }
+      ],
+      "checklist": [
+        "能说清 Box 是什么、为什么需要它（递归类型、大结构体、trait 对象三种场景），并对照 unique_ptr 讲出异同",
+        "验收工程在本机 cargo run 通过，输出与预期一致，cargo test 4 passed，clippy 零警告、fmt 通过",
+        "能读懂并复现 E0072（递归类型无限大小）和 E0382（Box 被 move 后再用），说清各自的修法",
+        "能解释 Box<dyn Trait> 与泛型的取舍（静态分发 vs 动态分发），并说清 Deref 强制转换只发生在引用之间",
+        "跟练任务完成：单链表与 Sub 变体测试通过，Rustlings smart_pointers 组的 Box 部分清完，卡点清单已更新"
+      ],
+      "dayNumber": 15,
+      "goal": "掌握 Box 智能指针：说清它为什么是递归类型、大结构体与 trait 对象的必需品，并能读懂 E0072 与 E0382。",
+      "lessonDate": "2026-11-09",
+      "quiz": [
+        {
+          "a": "相同：独占所有权、不可复制只能 move、离开作用域自动释放、都能表达动态多态（Box<dyn Trait> 对 unique_ptr<Base>）。不同：Box 不可能为空（空用 Option<Box<T>>），没有 nullptr；Box 的 move/借用/Drop 完全沿用第 2 天的所有权规则，不是一套新规则。说它是「自然延伸」，是因为 Box 没有引入新的语义——move 后旧变量失效还是 E0382，Drop 还是按作用域来，它只是把「所有权」这套规则应用到了堆上的数据。",
+          "q": "Box<T> 和 C++ 的 std::unique_ptr<T> 有什么相同和不同？为什么说 Box 是「所有权系统的自然延伸」而不是一个新概念？"
+        },
+        {
+          "a": "报 E0072：recursive type has infinite size。意思是编译器要在编译期算出每个类型占多少字节，Expr 包含 Expr、又包含 Expr，嵌套没有尽头，大小无限。Box 修好的办法是把「值」换成「指针」：Box<Expr> 永远是 8 字节，递归在指针这一层就有了确定的大小。",
+          "q": "把递归枚举里的 Box<Expr> 改成直接的 Expr 会报什么错？报错里的 infinite size 是什么意思，Box 是怎么把它修好的？"
+        },
+        {
+          "a": "没有复制。let big2 = big; 只搬了 8 字节的指针，堆上的数据一次都没动——测试里 big2.first() 仍为 9 就是证据。size_of_val(&big) 量的是栈上 Box 本身的 8 字节，不是堆上的 256KB；验证方法是断言它等于 size_of::<usize>()（测试里就是这么写的）。",
+          "q": "let big2 = big; 之后，堆上的 256KB 数据被复制了吗？size_of_val(&big) 量的是栈上的 8 字节还是堆上的 256KB？怎么验证？"
+        },
+        {
+          "a": "Vec<Circle> 只能装一种类型，编译期就确定，调用方法时静态分发、零运行时开销；Vec<Box<dyn Shape>> 能装任何实现了 Shape 的类型，方法调用时查虚表动态分发，有一次间接跳转的成本。判断标准：类型编译期能确定、追求性能，用泛型；类型要到运行期才知道（配置、插件、异构集合），用 Box<dyn Trait>。",
+          "q": "Vec<Box<dyn Shape>> 和 Vec<Circle> 有什么区别？什么时候用泛型、什么时候用 Box<dyn Trait>，判断标准是什么？"
+        },
+        {
+          "a": "叫 Deref 强制转换（deref coercion）：编译器沿着 &Box<String> → &String → &str 自动转换，因为 Box、String 都实现了 Deref。Box<String> 本身不能直接当 String 用——那是 move 语义，不是借用；只有「引用」之间才能自动转换，Box<T> 到 T 需要显式解引用 *b 或 move 出来。",
+          "q": "&Box<String> 能传给要 &str 的参数，这叫什么机制？Box<String> 本身能直接当 String 用吗？为什么？"
+        }
+      ],
+      "summary": "Box 是堆上的独占指针：靠 8 字节定长指针打断递归类型、让大结构体 move 只搬指针、并以 Box<dyn Trait> 实现运行期多态。",
+      "title": "Box 智能指针：把数据装进堆里",
+      "weekNumber": 3
     }
   ]
 }
