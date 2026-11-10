@@ -2839,6 +2839,195 @@
       "summary": "Box 是堆上的独占指针：靠 8 字节定长指针打断递归类型、让大结构体 move 只搬指针、并以 Box<dyn Trait> 实现运行期多态。",
       "title": "Box 智能指针：把数据装进堆里",
       "weekNumber": 3
+    },
+    {
+      "dayNumber": 16,
+      "weekNumber": 3,
+      "title": "Rc 与 RefCell：单线程共享所有权与内部可变性",
+      "lessonDate": "2026-11-10",
+      "goal": "掌握 Rc 共享所有权、RefCell 内部可变性与 Weak 打破循环引用",
+      "summary": "Rc 共享所有权只加计数不复制数据，RefCell 把借用检查移到运行期，Rc<RefCell<T>> 是单线程多所有者可变共享的标准组合，循环引用用 Weak 打破",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "Rc 是什么、为什么需要共享所有权",
+              "minutes": "10 分钟",
+              "detail": "读核心讲解第 1-2 节，对照 C++ 的 shared_ptr 理解引用计数"
+            },
+            {
+              "label": "RefCell 与内部可变性",
+              "minutes": "15 分钟",
+              "detail": "读第 3-4 节：运行时借用检查、borrow_mut 的 panic、Rc 与 RefCell 的组合"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "20 分钟",
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），动手改两处看报错"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "15 分钟",
+              "detail": "做跟练任务与自测题，Rustlings 的 smart_pointers 组刷 Rc / RefCell 部分"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. Rc 是什么：引用计数的共享所有权，对位 C++ 的 shared_ptr"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rc<T>（Reference Counted）是一个带引用计数的共享指针：多个所有者可以同时持有同一份数据，计数器记录当前有多少个 Rc 指向它；最后一个 Rc 离开作用域时，数据才被释放。栈上每个 Rc 还是一个指针大小，堆上的数据只有一份。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "关键点：Box 是「一个所有者」，Rc 是「多个所有者、最后走的那个关灯」。Rc::clone(&cfg) 看起来像复制，其实只是把计数从 1 加到 2，堆上的 Config 一份都没动——今天示例里 strong_count 从 1 变 3、再随 drop 回落到 1，就是直接证据。想深拷贝一份独立数据，要写 (*cfg).clone()（要求 T: Clone），那是另一回事，不要把两个 clone 搞混。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "什么时候用 Rc：当一份数据天然有多个「主人」，且分不清谁先死、谁后死的时候——图和树里一个节点被多个父节点引用、多处共享的只读配置、观察者模式里多个订阅者持有同一份状态。",
+            "什么时候不用 Rc：如果所有权关系是清晰的「谁创建、谁负责」，Box 或引用就够了——不要为了省事到处套 Rc。",
+            "Rc 只解决「共享」，不解决「可变」和「线程安全」，那是 RefCell 和 Arc 的事。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "2. 为什么需要共享所有权：Box 独占不够的三种场景"
+        },
+        {
+          "kind": "paragraph",
+          "text": "场景一：多处共享的只读配置。网关启动时读一份配置，日志、路由、限流模块都要读。Box 只能有一个所有者，借引用又会被生命周期卡住；Rc<Config> 让三处各持一份，配置的生命周期由「最后一份 Rc 消失」决定，不用再排先后。场景二：图与树里一个节点有多个父节点。第 15 天的表达式树是「一个父节点、两个子节点」，Box 够用；但图结构里一个节点可能被多个节点指向，Box 的独占语义表达不了「多对一」。场景三：观察者与回调共享同一份状态。多个回调函数都要读写同一份计数器或状态机，注册和注销顺序都不确定，Rc<RefCell<T>> 是单线程下的标准写法。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. RefCell：内部可变性，把借用检查从编译期移到运行期"
+        },
+        {
+          "kind": "paragraph",
+          "text": "借用规则（第 3 天）说：同一时刻要么多个不可变借用、要么一个可变借用。编译器在编译期强制执行这条规则，但有些场景编译期算不出来——比如多个 Rc 句柄在不同时刻轮流改同一份计数器，编译器看不到「轮流」这个时序，只能看到「多个所有者都想可变借用」，于是直接拒绝。RefCell<T> 的解法是内部可变性（interior mutability）：把借用检查从编译期推迟到运行期。RefCell 自己在内部维护一个借用计数：borrow() 拿不可变借用，已有可变借用时直接 panic；borrow_mut() 拿可变借用，要求当前没有任何借用，否则直接 panic；try_borrow() / try_borrow_mut() 是不 panic 的版本，违规时返回 Err，可以优雅处理。"
+        },
+        {
+          "kind": "callout",
+          "text": "RefCell 不是「绕过借用检查」，而是「把检查推迟」。规则本身一字没变，只是执行时间从编译期改成了运行期，违规的代价也从「编译不过」变成了「运行时 panic」。所以 RefCell 只适合「编译器算不出来、但你能保证运行期不违规」的场景——比如测试替身、观察者回调、图结构的局部可变；如果明明能在编译期排好借用关系，就不要用 RefCell，那是把确定性的编译错误换成了不确定的运行时 panic。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：RefCell 类似 mutable 成员加运行期断言的组合——const 方法里也能改 mutable 字段，但如果两个线程同时改，C++ 是未定义行为；Rust 的 RefCell 在单线程内把违规变成确定的 panic（而不是悄悄的未定义行为），多线程下则直接编译拒绝。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. Rc<RefCell<T>>：单线程多所有者、可变共享的标准组合"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rc 和 RefCell 各解决一半问题，合起来就是单线程下「多处持有、处处可改」的完整答案：外层 Rc 让多个所有者共享同一份数据，计数归零才释放；内层 RefCell 在 & 引用上提供可变访问，运行期检查借用规则。今天示例的共享计数器就是这个组合的最小形态：三个 Rc 句柄指向同一份 Counter，各自 borrow_mut() 改值，最终累加到 111——任何一个句柄改完，其他句柄立刻能看到。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "Rc::clone(&x) 永远是首选写法，不要写 x.clone()：前者一眼能看出「我只是加了个引用计数」，后者看不出是浅拷贝还是深拷贝——Rust 社区约定俗成，Rc::clone 写全称就是为了让共享所有权在代码里显眼。",
+            "borrow_mut() 返回的 RefMut 是个守卫：worker_a.borrow_mut().value += 1; 这一行里，守卫在语句结束时就 drop，借用随即释放——所以连续三行 borrow_mut 不会冲突；但如果把守卫存进变量，借用会一直活到变量离开作用域，期间任何 borrow / borrow_mut 都会失败。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "5. 循环引用与 Weak：父弱子强，计数才能归零"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rc 有一个致命弱点，和 C++ 的 shared_ptr 一模一样：互相强引用会泄漏。今天示例第 5 段：节点 a 强引用 b、b 强引用 a，drop 掉外层两个句柄后，a 和 b 的引用计数都停在 1——互相拖着，谁也释放不了。解法是 Weak<T>：弱引用不计入强引用计数，不会阻止数据释放；用的时候调用 upgrade()，数据还在就返回 Some(Rc<T>)，已释放就返回 None。标准模式是父弱子强：父节点用 Rc 强引用子节点（父活着，子就不能死），子节点用 Weak 弱引用父节点（子活着，不能拖着父不死）。今天示例的树就是这个结构：drop(root) 之后，child 的 parent.upgrade() 立刻返回 None，整棵树干净释放。判断什么时候用 Weak：画出引用关系图，找环——凡是「回指」的那条边（子指父、缓存指回缓存的拥有者、观察者指回被观察者），都用 Weak。没有环的结构不需要 Weak；有环不用 Weak，就是泄漏。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解与报错读法"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "误解一：「Rc::clone 是复制了一份数据。」错。Rc::clone 只把计数 +1，数据还是同一份——示例里三个句柄看到的配置完全相同、改一处处处可见，就是证据。想复制数据要显式 (*rc).clone()，而且那要求 T 实现 Clone。",
+            "误解二：「RefCell 让借用检查消失了，可以随便可变借用。」错。规则没变，只是执行时间改到了运行期，违规从编译错误变成了 panic。borrow_mut() 在已有借用时直接 panic（already borrowed: BorrowMutError），生产代码里要么用 try_borrow_mut() 优雅处理，要么确保借用绝不重叠。",
+            "误解三：「满屏 Rc<RefCell<T>> 就能解决所有所有权问题。」错，而且是清单里点名提醒的坏味道。Rc<RefCell<T>> 到处出现，通常是所有权设计错了的信号——先停下来重构：能不能用引用、能不能把数据拆成「共享的只读部分 + 明确归属的可变部分」、是不是该换个结构。",
+            "E0277：Rc<T> cannot be sent between threads safely。把 Rc move 进 std::thread::spawn 的闭包就会报这个错——今天验证时实测复现过。读法：Rc 的计数器不是原子的，跨线程加减计数会数据竞争，所以 Rc 没有实现 Send。修法：多线程共享用明天的 Arc（原子引用计数），单线程才用 Rc。RefCell 同理：它没有实现 Sync，不能跨线程共享，多线程的可变共享用明天的 Mutex。",
+            "panic：already borrowed。运行期借用违规。读法：看 panic 位置附近哪个 Ref / RefMut 守卫还活着——守卫的生命周期就是借用的生命周期；修法是缩短守卫的作用域（用花括号限定），或改用 try_borrow_mut() 处理 Err。",
+            "E0382 use of moved value：和 Box 一样，Rc 被 move 后原变量失效——第 2 天的规则对智能指针一字不改地适用。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "7. 今天不做的事"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Arc / Mutex / Send / Sync：多线程共享，明天第 17 天。Arc 是 Rc 的原子版，Mutex 是 RefCell 的线程安全版——今天先把单线程的组合练熟，明天只是换一对线程安全的零件。Cell：RefCell 的轻量亲戚，专用于 Copy 类型（如 Cell<u32>），用 get / set 读写、没有借用守卫。Box::leak、into_raw / from_raw：把智能指针变成裸指针、绕过所有权系统，属于 unsafe 操作，第 7 周讲 unsafe 边界时再碰。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test（5 passed）、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑。它把今天的五个点串在一个程序里：Rc 共享所有权与引用计数、Rc<RefCell<T>> 多处可改、运行时借用检查、Weak 打破循环引用、互相强引用的泄漏反面教材。另有一个未放进正文的验证：把 Rc move 进 std::thread::spawn 的闭包，编译器报 E0277（Rc<u32> cannot be sent between threads safely）。先跑 cargo new rust-day16 --bin，再把 src/main.rs 换成下面这份完整代码（无外部依赖，不用联网下载任何 crate）。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "/// 第 16 天 · Rc 与 RefCell：单线程共享所有权与内部可变性。\nuse std::cell::RefCell;\nuse std::rc::{Rc, Weak};\n\n/// 多处共享的只读配置：Rc 只加引用计数，不复制数据。\n#[derive(Debug)]\nstruct Config {\n    name: String,\n    max_connections: usize,\n}\n\nimpl Config {\n    fn describe(&self) -> String {\n        format!(\"{}（最大连接数 {}）\", self.name, self.max_connections)\n    }\n}\n\n/// 共享的可变计数器：Rc 管共享，RefCell 管可变。\n#[derive(Debug)]\nstruct Counter {\n    value: u32,\n}\n\n/// 树节点：子节点用 Rc 强引用，父节点用 Weak 弱引用，避免循环。\n#[derive(Debug)]\nstruct Node {\n    name: &'static str,\n    children: Vec<Rc<RefCell<Node>>>,\n    parent: Weak<RefCell<Node>>,\n}\n\nimpl Node {\n    fn new(name: &'static str) -> Rc<RefCell<Node>> {\n        Rc::new(RefCell::new(Node {\n            name,\n            children: Vec::new(),\n            parent: Weak::new(),\n        }))\n    }\n\n    fn add_child(parent: &Rc<RefCell<Node>>, child: &Rc<RefCell<Node>>) {\n        child.borrow_mut().parent = Rc::downgrade(parent);\n        parent.borrow_mut().children.push(Rc::clone(child));\n    }\n}\n\nfn main() {\n    // 1. Rc 共享所有权：clone 只加引用计数，不复制数据。\n    let cfg = Rc::new(Config {\n        name: \"sandbox-gateway\".to_string(),\n        max_connections: 128,\n    });\n    println!(\"配置：{}\", cfg.describe());\n    println!(\"创建后引用计数：{}\", Rc::strong_count(&cfg));\n    let cfg_a = Rc::clone(&cfg);\n    let cfg_b = Rc::clone(&cfg);\n    println!(\"两次 clone 后引用计数：{}\", Rc::strong_count(&cfg));\n    println!(\n        \"三处看到的是同一份配置：{} / {} / {}\",\n        cfg.describe(),\n        cfg_a.describe(),\n        cfg_b.describe()\n    );\n    drop(cfg_a);\n    println!(\"drop 一份后引用计数：{}\", Rc::strong_count(&cfg));\n    drop(cfg_b);\n    println!(\"再 drop 一份后引用计数：{}\", Rc::strong_count(&cfg));\n\n    // 2. Rc<RefCell<T>>：多处持有，处处可改。\n    let counter = Rc::new(RefCell::new(Counter { value: 0 }));\n    let worker_a = Rc::clone(&counter);\n    let worker_b = Rc::clone(&counter);\n    worker_a.borrow_mut().value += 1;\n    worker_b.borrow_mut().value += 10;\n    counter.borrow_mut().value += 100;\n    println!(\"共享计数器最终值：{}（应为 111）\", counter.borrow().value);\n    println!(\"计数器引用计数：{}\", Rc::strong_count(&counter));\n\n    // 3. 运行时借用检查：已有可变借用时，第二次可变借用被拒绝。\n    let cell = RefCell::new(5_i32);\n    let _guard = cell.borrow_mut(); // 可变借用还活着\n    match cell.try_borrow_mut() {\n        Ok(_) => println!(\"意外：第二次可变借用居然成功了\"),\n        Err(e) => println!(\"第二次可变借用被拒绝：{e}\"),\n    }\n    drop(_guard);\n    *cell.borrow_mut() = 6;\n    println!(\"释放后可变借用恢复：{}\", cell.borrow());\n\n    // 4. Weak 打破循环引用：父节点持有子节点，子节点只弱引用父节点。\n    let root = Node::new(\"root\");\n    let child = Node::new(\"child\");\n    Node::add_child(&root, &child);\n    println!(\n        \"挂接后：root 引用计数 {}，child 引用计数 {}\",\n        Rc::strong_count(&root),\n        Rc::strong_count(&child)\n    );\n    println!(\n        \"child 能找到父节点：{}\",\n        child\n            .borrow()\n            .parent\n            .upgrade()\n            .map(|p| p.borrow().name)\n            .unwrap_or(\"（已释放）\")\n    );\n    drop(root);\n    println!(\n        \"drop root 后，child 的父节点：{}\",\n        child\n            .borrow()\n            .parent\n            .upgrade()\n            .map(|p| p.borrow().name)\n            .unwrap_or(\"（已释放）\")\n    );\n\n    // 5. 反面教材：两个节点互相强引用，drop 外层句柄后谁也释放不了。\n    let a = Rc::new(RefCell::new(Node {\n        name: \"a\",\n        children: Vec::new(),\n        parent: Weak::new(),\n    }));\n    let b = Rc::new(RefCell::new(Node {\n        name: \"b\",\n        children: Vec::new(),\n        parent: Weak::new(),\n    }));\n    a.borrow_mut().children.push(Rc::clone(&b));\n    b.borrow_mut().children.push(Rc::clone(&a));\n    println!(\n        \"互相强引用后：a 引用计数 {}，b 引用计数 {}\",\n        Rc::strong_count(&a),\n        Rc::strong_count(&b)\n    );\n    drop(a);\n    drop(b);\n    println!(\"drop 外层句柄后，两节点的引用计数仍为 1（互相拖着，谁也释放不了）\");\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn rc_clone_shares_not_copies() {\n        let shared = Rc::new(RefCell::new(0_u32));\n        let h1 = Rc::clone(&shared);\n        let h2 = Rc::clone(&shared);\n        assert_eq!(Rc::strong_count(&shared), 3);\n        *h1.borrow_mut() = 42;\n        assert_eq!(*h2.borrow(), 42);\n        assert_eq!(*shared.borrow(), 42);\n        drop(h1);\n        drop(h2);\n        assert_eq!(Rc::strong_count(&shared), 1);\n    }\n\n    #[test]\n    fn refcell_runtime_borrow_check() {\n        let cell = RefCell::new(5_i32);\n        let guard = cell.borrow_mut();\n        assert!(cell.try_borrow().is_err());\n        assert!(cell.try_borrow_mut().is_err());\n        drop(guard);\n        assert_eq!(*cell.borrow(), 5);\n        *cell.borrow_mut() = 6;\n        assert_eq!(*cell.borrow(), 6);\n    }\n\n    #[test]\n    fn weak_breaks_cycle() {\n        let root = Node::new(\"root\");\n        let child = Node::new(\"child\");\n        Node::add_child(&root, &child);\n        assert_eq!(Rc::strong_count(&root), 1);\n        assert_eq!(Rc::strong_count(&child), 2);\n        assert!(child.borrow().parent.upgrade().is_some());\n        drop(root);\n        assert_eq!(Rc::strong_count(&child), 1);\n        assert!(child.borrow().parent.upgrade().is_none());\n    }\n\n    #[test]\n    fn strong_cycle_never_drops() {\n        let a = Rc::new(RefCell::new(Node {\n            name: \"a\",\n            children: Vec::new(),\n            parent: Weak::new(),\n        }));\n        let b = Rc::new(RefCell::new(Node {\n            name: \"b\",\n            children: Vec::new(),\n            parent: Weak::new(),\n        }));\n        a.borrow_mut().children.push(Rc::clone(&b));\n        b.borrow_mut().children.push(Rc::clone(&a));\n        assert_eq!(Rc::strong_count(&a), 2);\n        assert_eq!(Rc::strong_count(&b), 2);\n        drop(a);\n        drop(b);\n        // 两个节点互相拖着，引用计数永远回不到 0：这就是循环引用泄漏。\n        // 注意：这里故意让它们泄漏，测试本身只验证计数行为。\n    }\n\n    #[test]\n    fn shared_counter_accumulates() {\n        let counter = Rc::new(RefCell::new(Counter { value: 0 }));\n        let workers: Vec<_> = (0..3).map(|_| Rc::clone(&counter)).collect();\n        for (i, w) in workers.iter().enumerate() {\n            w.borrow_mut().value += (i + 1) as u32;\n        }\n        assert_eq!(counter.borrow().value, 6);\n    }\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run、cargo test、cargo clippy -- -D warnings、cargo fmt --check。预期输出（确定性输出）：配置：sandbox-gateway（最大连接数 128）；创建后引用计数：1；两次 clone 后引用计数：3；三处看到的是同一份配置；drop 一份后引用计数：2；再 drop 一份后引用计数：1；共享计数器最终值：111（应为 111）；计数器引用计数：3；第二次可变借用被拒绝：RefCell already borrowed；释放后可变借用恢复：6；挂接后：root 引用计数 1，child 引用计数 2；child 能找到父节点：root；drop root 后，child 的父节点：（已释放）；互相强引用后：a 引用计数 2，b 引用计数 2；drop 外层句柄后，两节点的引用计数仍为 1。cargo test 应报告 5 passed；clippy 与 fmt 应静默通过。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 Rc::clone(&cfg) 改成 cfg.clone() 再跑 clippy——能通过，但体会为什么社区约定写全称；把 worker_a.borrow_mut().value += 1; 改成先 let mut g = worker_a.borrow_mut(); 再 g.value += 1;，同时在 g 还活着时加一行 worker_b.borrow_mut().value += 10;，看程序在运行期 panic（already borrowed），再把 g 的作用域用花括号收窄、看 panic 消失；把示例里的 Rc 换成 Arc、把 std::thread::spawn 的闭包 move 进 Rc，亲眼看一次 E0277——明天第 17 天会把这个错修好。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "用 Rc<RefCell<T>> 写一个双向链表的最小版本：节点有 value、next: Option<Rc<RefCell<Node>>>、prev: Option<Weak<RefCell<Node>>>，实现 push_back 与 iter_values（从头遍历返回值列表），再写两个测试（三个节点的遍历顺序正确、drop 头节点后第二个节点的 prev.upgrade() 为 None）。体会「回指用 Weak」这条规则。",
+            "把第 15 天的表达式树改成「共享子表达式」版：用 Rc<Expr> 让两个 Add 节点共享同一个子表达式，打印 strong_count 验证确实只存了一份；再故意把 Rc 换成 Box 实现同一件事，看编译器在哪里拦住你。把结论写进卡点清单。",
+            "Rustlings：刷 smart_pointers 组的 Rc / RefCell 部分（Box 的题昨天已清）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。",
+            "写一个小函数 fn try_double_borrow(cell: &RefCell<i32>) -> Result<(), String>：先拿一个可变借用不放，再用 try_borrow_mut 尝试第二次，失败时返回 Err 描述；写一个测试验证它返回 Err，再写一个测试验证守卫释放后同样的调用能成功。体会「panic 版 borrow_mut」与「Result 版 try_borrow_mut」的使用分界。"
+          ],
+          "verification": "跟练 1、2 的测试全部通过且 clippy 零警告；能说清 Rc::clone 与深拷贝的区别、RefCell 的运行期检查与 panic、Weak 打破循环引用的原理、E0277 的成因与修法；Rustlings smart_pointers 组的 Rc / RefCell 部分清完。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸（非必需）：官方免费教材《The Rust Programming Language》第 15 章后半部分（Rc、RefCell、循环引用）可作今晚泛读，对照今天的树与双向链表例子复核即可，不必逐字精读——今天的资料本身已够完成学习。明天第 17 天：Arc 与 Mutex——多线程共享所有权。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "Rc::clone(&cfg) 复制了 Config 吗？怎么用 strong_count 和「改一处、处处可见」验证它只是加了引用计数？如果确实想要一份独立的 Config，该怎么写？",
+          "a": "没有复制。Rc::clone 只把强引用计数 +1，堆上的 Config 始终只有一份——示例里 strong_count 从 1 变 3、随 drop 回落到 1 就是证据；「改一处、处处可见」是更直接的验证：Rc<RefCell<T>> 里一个句柄改完，其他句柄立刻能看到新值。想要独立的一份，要写 (*cfg).clone()（要求 Config: Clone），那才是深拷贝。"
+        },
+        {
+          "q": "RefCell 把借用检查从编译期移到运行期，规则本身变了吗？borrow_mut() 在已有借用时怎么处理，try_borrow_mut() 又怎么处理，各自适合什么场景？",
+          "a": "规则本身一字没变：同一时刻要么多个不可变借用、要么一个可变借用。变的只是执行时间——编译期改成运行期，违规的代价从「编译不过」变成「运行时 panic」。borrow_mut() 违规时直接 panic（already borrowed: BorrowMutError）；try_borrow_mut() 违规时返回 Err，适合「借用可能冲突、失败了要优雅处理」的场景；能保证不冲突时用 borrow_mut()，不确定时用 try_borrow_mut()。"
+        },
+        {
+          "q": "两个节点互相用 Rc 强引用对方，drop 掉外层句柄后会发生什么？为什么？Weak 是怎么修好这个问题的，upgrade() 返回 None 说明什么？",
+          "a": "谁也释放不了，内存泄漏。a 持有 b 的强引用、b 持有 a 的强引用，drop 外层句柄后两者的强引用计数都停在 1，永远回不到 0，Drop 永远不会执行。Weak 不计入强引用计数，不阻止数据释放；子节点用 Weak 回指父节点后，drop(root) 会让计数归零、父节点正常释放，之后 upgrade() 返回 None，说明弱引用指向的数据已经不在了。"
+        },
+        {
+          "q": "把 Rc<u32> move 进 std::thread::spawn 的闭包会报什么错？报错里的「cannot be sent between threads safely」是什么意思，明天学什么能修好它？",
+          "a": "报 E0277：Rc<u32> cannot be sent between threads safely。意思是 Rc 的引用计数器不是原子的，两个线程同时加减计数会数据竞争，所以 Rc 没有实现 Send，编译器拒绝把它 move 到另一个线程。修法是明天第 17 天的 Arc（原子引用计数）配 Mutex。"
+        },
+        {
+          "q": "Rc<RefCell<T>> 和 Arc<Mutex<T>> 各解决什么问题？为什么今天的组合不能直接拿去多线程用？（提示：一个差在计数器，一个差在借用检查。）",
+          "a": "Rc<RefCell<T>> 解决「单线程多所有者 + 可变共享」：Rc 管共享，RefCell 管可变。Arc<Mutex<T>> 解决「多线程多所有者 + 可变共享」：Arc 是原子版的 Rc，Mutex 是线程安全版的 RefCell。今天的组合不能跨线程，因为 Rc 的计数器非原子（E0277），RefCell 的借用检查没有锁、不是 Sync——两个缺口各差一个线程安全的零件，明天逐个换掉。"
+        }
+      ],
+      "checklist": [
+        "能说清 Rc 是什么、为什么需要共享所有权，并区分 Rc::clone（只加计数）与深拷贝",
+        "验收工程在本机 cargo run 通过，输出与预期一致，cargo test 5 passed，clippy 零警告、fmt 通过",
+        "能解释 RefCell 的内部可变性与运行期借用检查，复现 already borrowed 的 panic 并说清 try_borrow_mut 的用法",
+        "能用 Weak 打破循环引用并解释父弱子强的规则，能读懂 E0277（Rc 不能跨线程）并说清修法",
+        "跟练任务完成：双向链表与共享子表达式测试通过，Rustlings smart_pointers 组的 Rc / RefCell 部分清完，卡点清单已更新"
+      ]
     }
   ]
 }
