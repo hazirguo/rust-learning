@@ -3028,6 +3028,227 @@
         "能用 Weak 打破循环引用并解释父弱子强的规则，能读懂 E0277（Rc 不能跨线程）并说清修法",
         "跟练任务完成：双向链表与共享子表达式测试通过，Rustlings smart_pointers 组的 Rc / RefCell 部分清完，卡点清单已更新"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读核心讲解第 1-2 节，对照 C++ 的 shared_ptr 理解原子计数",
+              "label": "Arc 是什么、为什么 Rc 跨不了线程",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "读第 3-5 节：锁、守卫、临界区、Send / Sync",
+              "label": "Mutex 与 Arc<Mutex<T>> 组合",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），动手改两处看报错",
+              "label": "代码验证",
+              "minutes": "20 分钟"
+            },
+            {
+              "detail": "做跟练任务与自测题，Rustlings 的 smart_pointers 组刷 Arc / Mutex 部分",
+              "label": "跟练与自测",
+              "minutes": "15 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. Arc 是什么：原子引用计数的共享指针"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Arc<T>（Atomically Reference Counted）就是 Rc<T> 的多线程版：多个所有者共享同一份数据，计数归零才释放，区别只在计数器是原子的——加减计数用原子操作完成，多个线程同时 Arc::clone / drop 也不会把计数器加坏。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++ 的 std::shared_ptr：两者都是引用计数、多个所有者、clone 只加计数不复制数据；shared_ptr 的计数器天生就是原子的，Rc 的计数器是非原子的（单线程），Arc 的计数器是原子的（多线程）。选哪个只看一个问题：这份数据要不要跨线程。不要跨，Rc 更便宜；要跨，Arc 是唯一选择。"
+        },
+        {
+          "kind": "callout",
+          "text": "Arc 只解决「共享」，不解决「可变」。Arc<T> 指向的数据默认不可变，多线程下想改数据，还要再套一层 Mutex。Arc<Mutex<T>> 才是多线程版的 Rc<RefCell<T>>：Arc 管多线程共享，Mutex 管多线程可变。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 为什么 Rc 跨不了线程：E0277 不是刁难，是数据竞争的编译期拦截"
+        },
+        {
+          "kind": "paragraph",
+          "text": "把 Rc<u32> move 进 std::thread::spawn 的闭包，编译器报 E0277：Rc<u32> cannot be sent between threads safely。Rc 的计数器是普通的 usize，加减不是原子操作，两个线程同时 clone / drop 会把计数加坏——少加一次可能提前释放（use-after-free），少减一次可能永远泄漏。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "编译器用 Send 这个 trait 来拦截这件事：Send 的意思是「这个类型的所有权可以安全地转移到另一个线程」。Rc<T> 没有实现 Send，所以 thread::spawn（要求闭包是 Send）直接拒绝它。修法就是今天的 Arc：把 Rc::new 换成 Arc::new、Rc::clone 换成 Arc::clone，其他代码一字不用改，昨天的 E0277 复现代码今天直接通过。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. Mutex：互斥锁，RefCell 的线程安全版"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Mutex<T> 把一份数据锁起来：同一时刻最多一个线程能拿到里面的 T。它和 RefCell 是镜像关系：RefCell 把借用检查移到运行期、冲突时 panic；Mutex 用互斥锁保证没有数据竞争、冲突时阻塞等待；RefCell 的 borrow_mut() 返回 RefMut 守卫，Mutex 的 lock() 返回 MutexGuard 守卫；守卫活着就是借用/锁活着，守卫 drop 就是释放。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：Mutex<T> 相当于 std::mutex + std::lock_guard 合二为一，lock() 拿到守卫就是加锁成功，守卫离开作用域就是解锁。但 Rust 多了一层保证：C++ 里 mutex 和它保护的数据是分开的两个变量，忘了加锁就是数据竞争；Rust 把数据放进锁里（Mutex<T> 直接持有 T），不拿锁就碰不到数据——「先加锁、再访问」从编码约定变成了类型强制。"
+        },
+        {
+          "items": [
+            "lock() 返回的是 LockResult<MutexGuard>，不是直接的守卫——因为锁可能中毒，所以要 unwrap() 或 match 先处理这个 Result。",
+            "锁的粒度要小：每次 += 1 只锁一次、立刻释放，8 个线程轮流进来谁也不用等太久；循环外面拿一次锁、循环 1000 次都在锁里做，程序就退化成单线程。",
+            "try_lock() 拿不到锁时不阻塞，立刻返回 Err（WouldBlock），适合「锁被占着就先干点别的、过会儿再试」的场景。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "4. Arc<Mutex<T>>：多线程共享可变数据的标准组合"
+        },
+        {
+          "kind": "paragraph",
+          "text": "外层 Arc：多个线程共享同一份数据，计数归零才释放；内层 Mutex：同一时刻只允许一个线程访问数据。示例里 8 个线程各做 1000 次 *counter.lock().unwrap() += 1，最终值稳稳等于 8000。"
+        },
+        {
+          "items": [
+            "Arc::clone(&x) 永远是首选写法，不要写 x.clone()：前者一眼能看出只是加了个引用计数。",
+            "不要把 MutexGuard 送到别的线程去：守卫没有实现 Send，move 进另一个线程的闭包会报 E0277。想让另一个线程访问数据，是把 Arc clone 一份送过去、让它自己 lock()。",
+            "Rust 的 Mutex 不保护「代码」，只保护「数据」：临界区的范围就是守卫的生命周期，缩短守卫的作用域就是缩短临界区。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "5. Send 与 Sync：两个 auto trait，各自保证一件事"
+        },
+        {
+          "items": [
+            "Send：这个类型的所有权可以转移到另一个线程。Rc<T> 不是 Send（计数器非原子）；Arc<T> 是 Send（要求 T: Send + Sync）；MutexGuard 不是 Send。",
+            "Sync：这个类型的 & 引用可以被多个线程同时共享。RefCell<T> 不是 Sync（借用检查没有锁）；Mutex<T> 是 Sync（要求 T: Send）。",
+            "记忆口诀：Send 管「送过去」，Sync 管「共享着」。thread::spawn 要求闭包是 Send；Arc<T> 要求 T: Send + Sync。",
+            "Arc<RefCell<T>> 在编译期就被拒绝：RefCell 不是 Sync，所以 Arc<RefCell<T>> 不是 Send，错配的零件根本拼不到一起。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 锁中毒与 try_lock"
+        },
+        {
+          "kind": "paragraph",
+          "text": "如果一个线程拿着锁的时候 panic，锁就「中毒」了：数据可能处在改了一半的状态，之后所有 lock() 都会返回 Err(PoisonError)。但数据本身没有丢——PoisonError 里包着守卫，调用 into_inner() 就能把数据取回来。示例第 4 段：持有锁的线程 panic 前把值从 100 改成 101，主线程 lock() 拿到 Err，into_inner() 取回 101。"
+        },
+        {
+          "kind": "callout",
+          "text": "lock().unwrap() 适合「中毒就崩也能接受」的场景；做网关、沙箱这种要求健壮的服务时，要 match 这个 Result，中毒了用 into_inner() 恢复或重建状态。"
+        },
+        {
+          "kind": "heading",
+          "text": "7. 常见误解与报错读法"
+        },
+        {
+          "items": [
+            "误解：Arc 让数据可以在多线程里随便改。错——Arc 只解决共享，可变还要靠 Mutex / RwLock。",
+            "误解：Mutex 锁住了代码，临界区越大越安全。错——锁保护的是数据，临界区越大并发度越低；不要在锁里做网络请求、等另一个锁、或调用不知道会干什么的回调。",
+            "E0277（Rc 不能跨线程）：修法是 Rc → Arc、RefCell → Mutex。",
+            "E0277（MutexGuard 不能跨线程）：锁是谁拿的、就由谁在同一个线程里释放；把 Arc clone 一份送过去，让对方自己 lock()。",
+            "死锁（程序卡住、没有任何报错）：两个线程以相反顺序拿两把锁，或一个线程重复拿同一把锁。借用检查器防不住死锁——修法是固定加锁顺序、缩短临界区、必要时用 try_lock 加超时重试。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test（5 passed）、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑。"
+        },
+        {
+          "caption": "新建验证工程（无外部依赖，不用联网下载任何 crate）",
+          "code": "cargo new rust-day17 --bin\ncd rust-day17",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "src/main.rs 完整代码（测试代码见存档 Markdown，5 个测试全部通过）",
+          "code": "/// 第 17 天 · Arc 与 Mutex：多线程共享所有权。\nuse std::sync::{Arc, Mutex};\nuse std::thread;\n\n/// 多线程共享的只读配置：Arc 只加引用计数，不复制数据。\n#[derive(Debug)]\nstruct Config {\n    name: &'static str,\n    max_connections: usize,\n}\n\nfn main() {\n    // 1. Arc 共享只读配置：多个线程各持一份，计数归零才释放。\n    let cfg = Arc::new(Config {\n        name: \"sandbox-gateway\",\n        max_connections: 128,\n    });\n    println!(\"配置：{}（最大连接数 {}）\", cfg.name, cfg.max_connections);\n    println!(\"创建后引用计数：{}\", Arc::strong_count(&cfg));\n    let mut handles = vec![];\n    for i in 0..4 {\n        let c = Arc::clone(&cfg);\n        handles.push(thread::spawn(move || {\n            println!(\n                \"线程 {} 看到的配置：{}（最大连接数 {}）\",\n                i, c.name, c.max_connections\n            );\n        }));\n    }\n    for h in handles {\n        h.join().unwrap();\n    }\n    println!(\"线程结束后引用计数：{}\", Arc::strong_count(&cfg));\n\n    // 2. Arc<Mutex<T>>：多线程共享的可变计数器，8 个线程各加 1000 次。\n    let counter = Arc::new(Mutex::new(0_u32));\n    let mut handles = vec![];\n    for i in 0..8 {\n        let c = Arc::clone(&counter);\n        handles.push(thread::spawn(move || {\n            for _ in 0..1000 {\n                *c.lock().unwrap() += 1;\n            }\n            println!(\"线程 {} 完成 1000 次累加\", i);\n        }));\n    }\n    for h in handles {\n        h.join().unwrap();\n    }\n    println!(\n        \"共享计数器最终值：{}（应为 8000）\",\n        *counter.lock().unwrap()\n    );\n    println!(\"计数器引用计数：{}\", Arc::strong_count(&counter));\n\n    // 3. try_lock：拿不到锁时不阻塞，返回 Err。\n    let m = Mutex::new(0_u32);\n    let _guard = m.lock().unwrap(); // 锁还被拿着\n    match m.try_lock() {\n        Ok(_) => println!(\"意外：try_lock 居然成功了\"),\n        Err(e) => println!(\"try_lock 被拒绝：{e}\"),\n    }\n    drop(_guard);\n    *m.lock().unwrap() = 42;\n    println!(\"释放后可正常加锁，值：{}\", *m.lock().unwrap());\n\n    // 4. 锁中毒与恢复：持有锁的线程 panic，锁中毒但数据仍在。\n    let poisoned = Arc::new(Mutex::new(100_u32));\n    let p = Arc::clone(&poisoned);\n    let h = thread::spawn(move || {\n        let mut g = p.lock().unwrap();\n        *g += 1;\n        panic!(\"模拟持有锁的线程崩溃\");\n    });\n    let _ = h.join();\n    match poisoned.lock() {\n        Ok(g) => println!(\"未中毒，值：{g}\"),\n        Err(e) => println!(\n            \"锁已中毒，仍可取回数据：{}（中毒前的值已被保留）\",\n            *e.into_inner()\n        ),\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run、cargo test、cargo clippy -- -D warnings、cargo fmt --check。预期输出：配置 sandbox-gateway（最大连接数 128）、创建后引用计数 1、4 个线程各看到同一份配置、线程结束后引用计数回到 1、共享计数器最终值 8000、try_lock 被拒绝（try_lock failed because the operation would block）、释放后值 42、锁已中毒仍可取回数据 101。线程打印行的先后顺序每次运行可能不同，这是多线程调度的正常现象；第 4 段会打印一行子线程 panic 的提示，是故意触发的模拟崩溃。cargo test 应报告 5 passed。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把示例第 2 段的 Arc 换成 Rc，看编译器报 E0277，再换回来；把 *c.lock().unwrap() += 1 的锁挪到循环外面，用 time cargo run 对比两种写法的耗时，体会锁粒度对并发度的影响；把第 4 段的 match poisoned.lock() 改成 poisoned.lock().unwrap()，看主线程跟着 panic——再想想网关服务里该用哪种写法。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务（30 分钟内完成）"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "把第 16 天的共享计数器改成多线程版：Arc<Mutex<Counter>>，10 个线程各加 100 次，最终值应为 1000；再故意把 Arc 换成 Rc 编译一次，抄下 E0277 的完整报错，写一句自己的读法进卡点清单。",
+            "写一个迷你「多线程日志统计」：Arc<Mutex<HashMap<&'static str, u32>>>，4 个线程各处理一份假日志（每份是 [\"INFO\", \"WARN\", \"INFO\", \"ERROR\", ...] 这样的数组），每个级别计数 +1；主线程 join 后打印统计结果并写一个测试断言总数正确。体会「锁里只做计数、字符串处理放锁外」的粒度。",
+            "写一个函数 fn recover_or_reset(m: &Mutex<u32>) -> u32：lock() 成功返回当前值；中毒时用 into_inner() 取回数据、发现值超过 1000 就重置为 0 再返回。写两个测试：正常情况返回当前值；先让一个线程持锁 panic 再调用，验证中毒路径能取回数据并按规则重置。",
+            "Rustlings：刷 smart_pointers 组的 Arc / Mutex 部分；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1、2、3 的测试全部通过且 clippy 零警告；能说清 Arc 与 Rc 的区别、Mutex 守卫与临界区的关系、Send 与 Sync 各自的保证、锁中毒的恢复方法、E0277 的三种成因与修法；Rustlings smart_pointers 组的 Arc / Mutex 部分清完。"
+        },
+        {
+          "kind": "heading",
+          "text": "今天不做的事"
+        },
+        {
+          "kind": "paragraph",
+          "text": "RwLock（读多写少的锁）：明天第 18 天，和 Send / Sync 的深入一起讲。channel（mpsc）：第 19 天讲。Condvar / Barrier / OnceLock：第 19 天随 channel 一起讲，或第 4 周项目 2 里按需用。原子类型（AtomicUsize 等）：项目 2 做性能对比时用实测数据说话。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸（非必需）：官方免费教材《The Rust Programming Language》第 16 章（fearless concurrency：线程、消息传递、共享状态并发、Send / Sync）可作今晚泛读，对照今天的 Arc<Mutex<T>> 例子复核即可。明天第 18 天：RwLock 与 Send / Sync 深入。"
+        }
+      ],
+      "checklist": [
+        "能说清 Arc 是什么、为什么 Rc 跨不了线程，并区分 Arc::clone（只加计数）与深拷贝",
+        "验收工程在本机 cargo run 通过，最终计数 8000 与预期一致，cargo test 5 passed，clippy 零警告、fmt 通过",
+        "能解释 Mutex 的锁与守卫、临界区的范围，复现 try_lock 被拒绝并说清锁中毒的恢复方法",
+        "能区分 Send 与 Sync 各自的保证，读懂 E0277 的三种成因（Rc、MutexGuard、Arc<RefCell<T>>）并说清修法",
+        "跟练任务完成：多线程计数器与日志统计测试通过，Rustlings smart_pointers 组的 Arc / Mutex 部分清完，卡点清单已更新"
+      ],
+      "dayNumber": 17,
+      "goal": "掌握 Arc 原子引用计数与 Mutex 互斥锁，写出 Arc<Mutex<T>> 的多线程共享模式，读懂 Send / Sync 与 E0277。",
+      "lessonDate": "2026-11-11",
+      "quiz": [
+        {
+          "a": "没有复制。Arc::clone 只把强引用计数 +1，堆上的 Config 始终只有一份——示例里 strong_count 随线程创建涨、随 join 回落到 1 就是证据。本质区别是计数器：Rc 的计数器是普通 usize，加减不是原子操作，多线程同时操作会互相覆盖；Arc 的计数器是原子的，多线程同时加减也不会错。所以 Rc 没有实现 Send（E0277 拦住跨线程），Arc 实现了 Send，能跨线程。",
+          "q": "Arc::clone(&cfg) 复制了 Config 吗？Arc 和 Rc 的计数器有什么本质区别，这个区别为什么决定了谁能跨线程、谁不能？"
+        },
+        {
+          "a": "RefCell<T> 解决「单线程可变共享」：把借用检查移到运行期，冲突时 panic。Mutex<T> 解决「多线程可变共享」：用互斥锁保证同一时刻只有一个线程访问数据，冲突时阻塞等待。Arc<RefCell<T>> 拼不到一起，因为 RefCell 不是 Sync（它的借用检查没有锁），所以 Arc<RefCell<T>> 不是 Send，thread::spawn 会报 E0277。修法是 RefCell → Mutex。",
+          "q": "Mutex<T> 和 RefCell<T> 各解决什么问题？为什么 Arc<RefCell<T>> 拼不到一起，编译器会用什么报错拦住你？"
+        },
+        {
+          "a": "MutexGuard 是 lock() 返回的守卫，解引用就能访问锁里的数据。守卫活着 = 锁被占着，守卫 drop = 锁释放——守卫的生命周期就是临界区。不能把守卫送到另一个线程，因为 MutexGuard 没有实现 Send（实测报 E0277）：锁是谁拿的、就由谁在同一个线程里释放；想让另一个线程访问数据，是把 Arc clone 一份送过去、让它自己 lock()。",
+          "q": "lock() 返回的 MutexGuard 是什么？守卫的生命周期和临界区是什么关系？为什么不能把守卫送到另一个线程去？"
+        },
+        {
+          "a": "锁中毒了：之后所有 lock() 返回 Err(PoisonError)，而不是正常拿到守卫。into_inner() 从 PoisonError 里把数据取回来——数据本身没丢，只是可能处在改了一半的状态。unwrap() 适合「中毒就崩也能接受」的场景；做网关、沙箱这种要求健壮的服务时，要 match 这个 Result，中毒了用 into_inner() 取回数据、评估一致性后再决定继续用还是重建。",
+          "q": "一个线程拿着锁的时候 panic 了，之后其他线程 lock() 会得到什么？into_inner() 是干什么的，什么场景下该用它而不是 unwrap()？"
+        },
+        {
+          "a": "Send：所有权可以转移到另一个线程。Sync：& 引用可以被多个线程同时共享。Arc<T> 是 Send 要求 T: Send + Sync；Mutex<T> 是 Sync 要求 T: Send。一句话：Send 管「送过去」，Sync 管「共享着」——thread::spawn 要求闭包是 Send，Arc<T> 要求 T 又能送、又能共享。",
+          "q": "Send 和 Sync 各自保证什么？Arc<T> 是 Send 需要什么条件，Mutex<T> 是 Sync 需要什么条件？用一句话说清「Send 管送过去、Sync 管共享着」。"
+        }
+      ],
+      "summary": "Arc 是 Rc 的多线程版（原子计数），Mutex 是 RefCell 的线程安全版（互斥锁）；Arc<Mutex<T>> 是多线程共享可变数据的标准组合，Send 管送过去、Sync 管共享着。",
+      "title": "Arc 与 Mutex：多线程共享所有权",
+      "weekNumber": 3
     }
   ]
 }
