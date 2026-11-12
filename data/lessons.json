@@ -3249,6 +3249,189 @@
       "summary": "Arc 是 Rc 的多线程版（原子计数），Mutex 是 RefCell 的线程安全版（互斥锁）；Arc<Mutex<T>> 是多线程共享可变数据的标准组合，Send 管送过去、Sync 管共享着。",
       "title": "Arc 与 Mutex：多线程共享所有权",
       "weekNumber": 3
+    },
+    {
+      "dayNumber": 18,
+      "weekNumber": 3,
+      "title": "RwLock：读多写少的读写锁",
+      "lessonDate": "2026-11-12",
+      "goal": "掌握 RwLock 的读共享、写独占语义，写出 Arc<RwLock<T>> 的读多写少配置中心模式",
+      "summary": "RwLock 读共享、写独占：读多写少的配置中心用 Arc<RwLock<T>>，读锁不能原地升级、写饥饿与锁中毒要会处理",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "RwLock 是什么、读锁与写锁的语义",
+              "minutes": "10 分钟",
+              "detail": "读「核心讲解」第 1-2 节，对照 C++ 的 shared_mutex 理解"
+            },
+            {
+              "label": "什么时候用 RwLock、什么时候别用",
+              "minutes": "10 分钟",
+              "detail": "读第 3-4 节：读多写少 vs 写多、写饥饿"
+            },
+            {
+              "label": "读锁升级与锁中毒、守卫的 Send",
+              "minutes": "10 分钟",
+              "detail": "读第 5-7 节，记住两个实测结论"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "20 分钟",
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），动手改两处看报错"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "10 分钟",
+              "detail": "做跟练任务与自测题，Rustlings 的 smart_pointers 组收尾"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. RwLock 是什么：读锁共享、写锁独占"
+        },
+        {
+          "kind": "paragraph",
+          "text": "RwLock<T>（读写锁）把一份数据锁起来，但规则和 Mutex 不同：读锁可以多个线程同时持有，读和读之间不冲突；写锁同一时刻最多一个，且持有期间不允许任何读锁存在。写和读、写和写都互斥。对照 C++：这就是 C++17 的 std::shared_mutex（读锁 shared_lock、写锁 unique_lock），或 POSIX 的 pthread_rwlock_t。区别在 Rust 这一侧和昨天一样——数据被放进锁里（RwLock<T> 直接持有 T），不拿锁就碰不到数据，「先加锁、再访问」是类型强制的，不是编码约定。心智模型一句话：Mutex 是「一次只进一个人」，RwLock 是「读的时候可以一群人一起进，写的时候必须清场」。今天示例第 1 段就是直接证据：4 个读线程各持读锁睡 50 毫秒，打印顺序交错、互不等待；若把 RwLock 换成 Mutex，4 个读线程就要排队。选型口诀：读多写少用 RwLock，写多、或读写差不多用 Mutex。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. API：read / write / try_read / try_write，与 Mutex 是镜像"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "read() 返回 LockResult<RwLockReadGuard>，拿不到时阻塞等待，直到没有写锁；解引用出 &T（只读）。",
+            "write() 返回 LockResult<RwLockWriteGuard>，拿不到时阻塞等待，直到没有任何读锁也没有写锁；解引用出 &mut T（可写）。",
+            "try_read() / try_write() 拿不到立刻返回 Err（WouldBlock），不阻塞；into_inner() 消费锁取出数据，中毒时仍可取回。",
+            "守卫的用法和 MutexGuard 一模一样：解引用就能访问数据，守卫 drop = 锁释放，守卫的生命周期就是临界区。",
+            "read() / write() 返回的是 LockResult，不是直接的守卫——因为锁可能中毒，所以要 unwrap()（或 ?、或 match）先处理这个 Result；锁的粒度要小，读锁也一样，不要在读锁里睡大觉、做网络请求。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "3. 什么时候用 RwLock，什么时候别用：读多写少才划算"
+        },
+        {
+          "kind": "paragraph",
+          "text": "RwLock 不是 Mutex 的「升级版」，它是「特化版」——只在一种负载下赢，别的负载下输。赢的场景是读多写少：网关的路由表、白名单、配置中心，每秒成千上万次读（每个请求都要查一次路由），写只在配置下发时发生。用 Mutex 时所有读请求都要排队；用 RwLock 时读请求可以并行，吞吐量随核心数上升。输的场景有三类：写多——RwLock 内部维护的读计数器本身就是共享状态，写锁要等所有读锁释放，锁的开销比 Mutex 更大；临界区极短——锁里只做一次整数加法时，维护读写计数的额外开销反而超过收益；读操作本身很重——读锁共存解决的是「锁的串行化」，不是「计算的并行化」。对照 C++：同样的取舍在 C++ 里也成立，std::shared_mutex 的实现比 std::mutex 更重，经验法则也是「读远多于写才用 shared_mutex」。一个 C++ 程序员最容易误解的点：「读锁共享」不等于「读操作没有成本」——每个 read() 都要对读计数器做一次原子操作，热路径上不要无意义地反复 read()，能一次读完就一次读完。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 写饥饿：读锁源源不断时，写锁可能一直等不到"
+        },
+        {
+          "kind": "paragraph",
+          "text": "std::sync::RwLock 的语义里不保证公平：只要还有读锁在，新来的读锁就能继续拿；写锁要等「所有读锁都释放」的那一刻。如果读请求源源不断、读锁永远不断档，写锁就可能一直等下去——这叫写饥饿（writer starvation）。对照 C++：std::shared_mutex 同样不保证公平，写饥饿是读写锁的通病。什么时候要当回事：配置中心的写是低频操作，饿一会儿没关系；但如果写操作是「必须及时生效的策略更新」（比如网关的封禁名单），而读请求是持续不断的流量，写饥饿就从理论问题变成了真实故障。对策按从易到难：缩短读锁持有时间（读锁越短，写锁等到空档的概率越大）；写操作用 try_write 加重试，避免无限期阻塞在 write() 上；需要严格公平时换实现——标准库的 RwLock 不提供公平保证，parking_lot crate 的 RwLock 提供写优先的公平策略，第 5 周读《Rust for Rustaceans》时再碰。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 读锁不能原地升级：拿着读锁再拿写锁会死锁"
+        },
+        {
+          "kind": "paragraph",
+          "text": "RwLock 最经典的坑：读锁不能升级成写锁。一个线程拿着读锁，再调用 write()，会永远等下去——因为写锁要求「没有任何读锁」，而那个读锁正是自己手里这把，自己等自己，死锁。对照 C++：std::shared_mutex 同样不支持读锁升级，C++ 程序员踩过一模一样的坑。正确做法只有一种：先放掉读锁，再拿写锁。今天示例第 3 段演示了安全版：先用 try_write() 探一下——拿着读锁时 try_write() 返回 Err（不会死锁，只是拒绝），读锁 drop 之后再 write()，立刻成功。实战里常见的正确模式是「读-检查-放-写-再读」：先拿读锁看一眼值需不需要改，不需要改就直接返回；需要改就放掉读锁、拿写锁、改完、再拿读锁确认。这个模式有个固有竞态：放掉读锁到拿写锁之间，别的线程可能已经改了值——所以写完之后要重新检查一次条件，这叫乐观重试，第 5 周讲 Tokio 时还会再碰到。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 锁中毒：和 Mutex 完全相同的机制"
+        },
+        {
+          "kind": "paragraph",
+          "text": "如果一个线程拿着写锁的时候 panic，锁就中毒了：数据可能处在改了一半的状态，之后所有 read() / write() 都会返回 Err(PoisonError)。数据本身没有丢——PoisonError 里包着守卫，调用 into_inner() 就能把数据取回来。今天示例第 4 段就是现场演示：持写锁的线程 panic 前把值从 100 改成 101，主线程 read() 拿到 Err，into_inner() 取回 101。注意一个细节：中毒后读锁也会返回 Err，不只是写锁——因为中毒标记是挂在整把锁上的。修复思路和昨天 Mutex 一模一样：默认 read().unwrap() 会在中毒时 panic；做网关、沙箱这种要求健壮的服务时，要 match 这个 Result，中毒了用 into_inner() 取回数据、评估它是否还一致，再决定继续用还是重建。"
+        },
+        {
+          "kind": "heading",
+          "text": "7. 守卫不是 Send：锁是谁拿的，就由谁在同一个线程里释放"
+        },
+        {
+          "kind": "paragraph",
+          "text": "今天验证里一个值得记的实测结论：RwLockReadGuard 不是 Send——把它传给要求 Send 的函数，编译器报 E0277（RwLockReadGuard<'_, u32> does not implement Send）。RwLockWriteGuard 同样不是 Send。这和昨天的 MutexGuard 完全一致：守卫没有实现 Send，锁是谁拿的、就由谁在同一个线程里释放。想让另一个线程访问数据，正确做法是把 Arc clone 一份送过去、让它自己 read() / write()，而不是把已经拿到的守卫送过去。对照 C++：C++ 的 std::shared_lock / std::unique_lock 是可以 move 到另一个线程的，编译器不会拦你——但跨线程解锁在 POSIX 上是未定义行为，C++ 把这个责任留给了程序员。Rust 又一次把「能不能跨线程」写进类型系统：守卫的类型签名里就写着「我不能跨线程」，错在编译期就被拦住。"
+        },
+        {
+          "kind": "callout",
+          "text": "常见误解：①「RwLock 是 Mutex 的升级版，到处都该用它」——错，只在读多写少时赢，写多、读写各半、临界区极短时 Mutex 更简单更快；默认用 Mutex，读多写少的证据确凿时再换 RwLock。②「读锁共享，所以读操作可以随便做」——错，读锁共享解决的是锁的串行化，每个 read() 都要对读计数器做原子操作，读锁也要短。③「拿着读锁，顺手升级成写锁改一下」——错，会死锁，正确做法是先 drop 读锁、再拿写锁，写完重新检查条件。"
+        },
+        {
+          "kind": "heading",
+          "text": "8. 报错读法"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "死锁（程序卡住、没有任何报错）：一个线程拿着读锁再 write()，或两个线程以相反顺序拿两把锁。修法是固定加锁顺序、缩短临界区、读锁升级改成「先放后拿」、必要时用 try_write 加超时重试。",
+            "E0277：RwLockReadGuard / RwLockWriteGuard does not implement Send——把读/写守卫 move 到另一个线程。今天已实测。修法：把 Arc clone 一份送过去，让对方自己 read() / write()。",
+            "E0597：match lock.read() 之类的临时值借用问题——今天验证里踩到的真报错：match poisoned.read() 直接写在 main 末尾，编译器报 E0597（临时值活得不够久）。修法是先把结果绑到一个变量（let res = poisoned.read();）再 match。这是「临时值的生命周期」这个通用规则在锁守卫上的体现，第 3 天讲借用时埋的伏笔，今天以报错的形式回来了。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test（5 passed）、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑。它把今天的四个点串在一个程序里：Arc<RwLock<Config>> 多读一写、try_read / try_write 的非阻塞尝试、读锁升级被拒绝与正确修法、写锁中毒与数据恢复。另有两处未放进正文的验证：RwLockReadGuard 传给要求 Send 的函数会报 E0277（守卫不是 Send）；match poisoned.read() 直接写在 main 末尾会报 E0597，改成先绑变量再 match 后通过。先建工程：cargo new rust-day18 --bin && cd rust-day18，再把 src/main.rs 换成下面这份完整代码（无外部依赖，不用联网下载任何 crate）。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "第 18 天完整示例：Arc<RwLock<Config>> 配置中心、try 锁、读锁升级、锁中毒恢复（5 个测试）",
+          "code": "/// 第 18 天 · RwLock：读多写少的读写锁。\nuse std::collections::HashMap;\nuse std::sync::{Arc, RwLock};\nuse std::thread;\nuse std::time::Duration;\n\n/// 网关用的只读配置表：读多写少，典型 RwLock 场景。\n#[derive(Debug)]\nstruct Config {\n    routes: HashMap<&'static str, &'static str>,\n    version: u64,\n}\n\nfn main() {\n    // 1. Arc<RwLock<Config>>：多个读线程并行读，写线程独占改。\n    let cfg = Arc::new(RwLock::new(Config {\n        routes: HashMap::from([\n            (\"api.example.com\", \"10.0.0.1:8080\"),\n            (\"cdn.example.com\", \"10.0.0.2:8080\"),\n        ]),\n        version: 1,\n    }));\n\n    // 4 个读线程：同时拿读锁，谁也不用等谁。\n    let mut handles = vec![];\n    for i in 0..4 {\n        let c = Arc::clone(&cfg);\n        handles.push(thread::spawn(move || {\n            let g = c.read().unwrap();\n            println!(\n                \"读线程 {}：版本 {}，api.example.com -> {}\",\n                i, g.version, g.routes[\"api.example.com\"]\n            );\n            // 读锁持有期间睡一会儿：证明多个读锁确实能共存，\n            // 若换成 Mutex，4 个读线程就要排队。\n            thread::sleep(Duration::from_millis(50));\n        }));\n    }\n\n    // 1 个写线程：拿写锁要等所有读锁释放，写期间读也要等。\n    let c = Arc::clone(&cfg);\n    let writer = thread::spawn(move || {\n        thread::sleep(Duration::from_millis(10));\n        let mut g = c.write().unwrap();\n        g.routes.insert(\"new.example.com\", \"10.0.0.3:8080\");\n        g.version += 1;\n        println!(\"写线程：已更新配置到版本 {}\", g.version);\n    });\n\n    for h in handles {\n        h.join().unwrap();\n    }\n    writer.join().unwrap();\n    let g = cfg.read().unwrap();\n    println!(\"最终：版本 {}，共 {} 条路由\", g.version, g.routes.len());\n    drop(g);\n\n    // 2. try_read / try_write：拿不到就立刻返回 Err，不阻塞。\n    let lock = RwLock::new(0_u32);\n    let _w = lock.write().unwrap(); // 写锁被占着\n    match lock.try_read() {\n        Ok(_) => println!(\"意外：写锁被占时 try_read 居然成功了\"),\n        Err(e) => println!(\"写锁被占时 try_read 被拒绝：{e}\"),\n    }\n    match lock.try_write() {\n        Ok(_) => println!(\"意外：写锁被占时 try_write 居然成功了\"),\n        Err(e) => println!(\"写锁被占时 try_write 被拒绝：{e}\"),\n    }\n    drop(_w);\n    assert_eq!(*lock.read().unwrap(), 0);\n\n    // 3. 读锁不能原地升级成写锁：拿着读锁再 try_write 会失败，\n    // 若用 write() 会死锁（自己等自己）。正确做法是先 drop 读锁。\n    let lock = RwLock::new(10_u32);\n    {\n        let r = lock.read().unwrap();\n        println!(\"持有读锁，值：{r}\");\n        match lock.try_write() {\n            Ok(_) => println!(\"意外：读锁被占时 try_write 居然成功了\"),\n            Err(e) => println!(\"读锁被占时 try_write 被拒绝：{e}（升级必须先放读锁）\"),\n        }\n    } // 读锁在这里释放\n    *lock.write().unwrap() = 20;\n    println!(\"放掉读锁后拿到写锁，值改为：{}\", *lock.read().unwrap());\n\n    // 4. 写锁中毒与恢复：持写锁的线程 panic，之后读/写都返回 Err，\n    // into_inner() 可取回数据。\n    let poisoned = Arc::new(RwLock::new(100_u32));\n    let p = Arc::clone(&poisoned);\n    let h = thread::spawn(move || {\n        let mut g = p.write().unwrap();\n        *g += 1;\n        panic!(\"模拟持写锁的线程崩溃\");\n    });\n    let _ = h.join();\n    let res = poisoned.read();\n    match res {\n        Ok(g) => println!(\"未中毒，值：{g}\"),\n        Err(e) => println!(\"读锁发现中毒，仍可取回数据：{}\", *e.into_inner()),\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn many_readers_share_the_lock() {\n        let cfg = Arc::new(RwLock::new(Config {\n            routes: HashMap::from([(\"a.example.com\", \"1.1.1.1:80\")]),\n            version: 1,\n        }));\n        let mut handles = vec![];\n        for _ in 0..8 {\n            let c = Arc::clone(&cfg);\n            handles.push(thread::spawn(move || {\n                // 8 个读线程同时读：若读锁互斥，这里会串行化；\n                // 若读锁共享，8 个线程可以重叠执行。\n                let g = c.read().unwrap();\n                assert_eq!(g.version, 1);\n                assert_eq!(g.routes[\"a.example.com\"], \"1.1.1.1:80\");\n                thread::sleep(Duration::from_millis(20));\n            }));\n        }\n        for h in handles {\n            h.join().unwrap();\n        }\n        assert_eq!(cfg.read().unwrap().version, 1);\n    }\n\n    #[test]\n    fn writer_sees_every_write_and_readers_see_latest() {\n        let shared = Arc::new(RwLock::new(0_u32));\n        let w = Arc::clone(&shared);\n        let writer = thread::spawn(move || {\n            for i in 1..=50 {\n                *w.write().unwrap() = i;\n            }\n        });\n        let mut readers = vec![];\n        for _ in 0..4 {\n            let r = Arc::clone(&shared);\n            readers.push(thread::spawn(move || {\n                let mut last = 0;\n                for _ in 0..200 {\n                    let v = *r.read().unwrap();\n                    // 读到的值只增不减：写锁保证写入是原子的，\n                    // 读者永远看不到改了一半的值。\n                    assert!(v >= last);\n                    last = v;\n                }\n                last\n            }));\n        }\n        writer.join().unwrap();\n        for r in readers {\n            r.join().unwrap();\n        }\n        assert_eq!(*shared.read().unwrap(), 50);\n    }\n\n    #[test]\n    fn try_write_fails_while_read_held() {\n        let lock = RwLock::new(0_u32);\n        let _r = lock.read().unwrap();\n        assert!(lock.try_write().is_err());\n        assert!(lock.try_read().is_ok()); // 读锁可以共存\n        drop(_r);\n        assert!(lock.try_write().is_ok());\n    }\n\n    #[test]\n    fn poisoned_rwlock_still_yields_data() {\n        let shared = Arc::new(RwLock::new(100_u32));\n        let p = Arc::clone(&shared);\n        let h = thread::spawn(move || {\n            let mut g = p.write().unwrap();\n            *g += 1;\n            panic!(\"模拟崩溃\");\n        });\n        assert!(h.join().is_err());\n        let res = shared.read();\n        let recovered = res.unwrap_err().into_inner();\n        assert_eq!(*recovered, 101);\n    }\n\n    #[test]\n    fn arc_rwlock_is_send() {\n        // Arc<RwLock<T>> 可以 move 进线程；但读/写守卫本身不是 Send\n        // （已实测：把 RwLockReadGuard 传给 assert_send 会报 E0277），\n        // 锁是谁拿的、就由谁在同一个线程里释放。\n        fn assert_send<T: Send>(_: T) {}\n        let shared = Arc::new(RwLock::new(0_u32));\n        assert_send(shared);\n    }\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run、cargo test、cargo clippy -- -D warnings、cargo fmt --check。预期输出（线程打印行的先后顺序每次运行可能不同，这是多线程调度的正常现象；确定性的行是最终版本与计数值）：4 个读线程各打印「版本 1，api.example.com -> 10.0.0.1:8080」，写线程打印「已更新配置到版本 2」，最终「版本 2，共 3 条路由」；写锁被占时 try_read 与 try_write 均被拒绝（try_lock failed because the operation would block）；持有读锁时 try_write 被拒绝（升级必须先放读锁），放掉读锁后拿到写锁、值改为 20；中间会打印一行子线程 panic 的提示（第 4 段故意触发的模拟崩溃），最后「读锁发现中毒，仍可取回数据：101」。cargo test 应报告 5 passed；clippy 与 fmt 应静默通过。动手验证三点：把示例第 1 段的 RwLock 换成 Mutex，用 time cargo run 对比耗时，体会「读多写少」时 RwLock 的收益；把第 3 段的 try_write() 改成 write()（拿着读锁再拿写锁），运行后看程序卡住——用 Ctrl-C 停掉，再想想为什么 try_write 是安全的探路方式；把第 4 段的 match res 改回 match poisoned.read() 直接写在 main 末尾，看编译器报 E0597，再改回来。"
+        },
+        {
+          "kind": "callout",
+          "text": "今天不做的事：channel（mpsc）——线程之间传消息而不是共享内存，明天第 19 天讲；Condvar / Barrier / OnceLock，第 19 天随 channel 一起讲；parking_lot 的 RwLock（写优先的公平读写锁），第 5 周读《Rust for Rustaceans》时再碰。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "把第 17 天的共享计数器改成「读多写少」版：Arc<RwLock<u32>>，8 个读线程各读 1000 次、1 个写线程加 100 次；主线程 join 后断言最终值是 100。再故意把读线程的 read() 换成 write() 跑一次，用 time 对比耗时，写一句自己的结论进卡点清单。",
+            "写一个迷你「网关路由表」：Arc<RwLock<HashMap<&'static str, &'static str>>>，4 个读线程各查 200 次路由、1 个写线程中途插入 2 条新路由；主线程 join 后打印最终路由数并写一个测试断言「读到的路由要么是旧版本、要么是新版本，永远不会是改了一半的中间态」。体会「读锁只包查询、写锁只包插入」的粒度。",
+            "修一个读锁升级死锁：下面这段代码会卡住——先跑一次确认它卡住（Ctrl-C 停掉），再改成「先放读锁、再拿写锁、写完重新检查」的正确版本，并写一个测试断言改完后值正确：let lock = RwLock::new(10_u32); let r = lock.read().unwrap(); if *r < 20 { *lock.write().unwrap() = 20; }（卡住：自己等自己）。",
+            "Rustlings：刷 smart_pointers 组剩余部分；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1、2、3 的测试全部通过且 clippy 零警告；能说清 RwLock 与 Mutex 的适用边界、写饥饿的成因与对策、读锁升级的正确修法、锁中毒的恢复方法、E0277（守卫不是 Send）与 E0597（临时值借用）的读法；Rustlings smart_pointers 组清完。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸（非必需）：官方免费教材《The Rust Programming Language》第 16 章（fearless concurrency：共享状态并发、Send / Sync）可作今晚泛读，对照今天的 Arc<RwLock<T>> 例子复核即可，不必逐字精读——今天的资料本身已够完成学习。明天第 19 天：线程间通信 channel（mpsc）——「不要通过共享内存来通信，要通过通信来共享内存」，以及 Condvar / Barrier / OnceLock。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "RwLock 的读锁和写锁各是什么语义？为什么多个读锁可以共存，写锁却必须独占？",
+          "a": "读锁共享：多个线程可以同时持有读锁，读和读之间不冲突；写锁独占：同一时刻最多一个写锁，且持有期间不允许任何读锁。读锁共存是因为读不改数据、互相看不到中间态；写锁独占是因为写会改数据，必须保证没有读者在看、没有别的写者在改——否则读者会看到改了一半的值。"
+        },
+        {
+          "q": "什么场景下 RwLock 比 Mutex 快，什么场景下反而更慢？「读多写少」这个口诀的依据是什么？",
+          "a": "读多写少时 RwLock 更快：读请求可以并行，吞吐量随核心数上升（示例里 4 个读线程互不等待）。写多、读写各半、临界区极短时反而更慢：RwLock 内部要维护读计数器，写锁要等所有读锁释放，锁本身的开销比 Mutex 更大。口诀的依据就是「收益来自让多个读并行」——没有大量的读可以并行，就没有收益，只有成本。"
+        },
+        {
+          "q": "什么是写饥饿？std::sync::RwLock 保证公平吗？如果写操作必须及时生效，有哪几种对策？",
+          "a": "写饥饿是读锁源源不断、写锁永远等不到「所有读锁都释放」的那一刻。std::sync::RwLock 不保证公平。对策：缩短读锁持有时间（读锁越短，写锁等到空档的概率越大）；写操作用 try_write 加重试，避免无限期阻塞；需要严格公平时换 parking_lot 的 RwLock（写优先）。"
+        },
+        {
+          "q": "拿着读锁再调用 write() 会发生什么？正确的「读后改写」模式应该怎么写，中间的竞态要怎么处理？",
+          "a": "会死锁：写锁要求「没有任何读锁」，而那个读锁正是自己手里这把，自己等自己，程序卡住、没有任何报错。正确模式是「读-检查-放-写-再读」：先拿读锁看一眼需不需要改，需要改就先 drop 读锁、再拿写锁、改完、再拿读锁确认。中间的竞态（放读锁到拿写锁之间别人改了值）要用乐观重试处理：写完重新检查条件。"
+        },
+        {
+          "q": "RwLockReadGuard 能送到另一个线程吗？Arc<RwLock<T>> 能吗？锁中毒后，read() 和 write() 各会得到什么，into_inner() 是干什么的？",
+          "a": "RwLockReadGuard 不能送到另一个线程——已实测报 E0277，守卫不是 Send（RwLockWriteGuard 同样不是）；Arc<RwLock<T>> 可以 move 进线程（已实测通过）。锁中毒后 read() 和 write() 都返回 Err(PoisonError)；into_inner() 从 PoisonError 里把数据取回来——数据本身没丢，只是可能处在改了一半的状态，取回后要评估一致性再决定继续用还是重建。"
+        }
+      ],
+      "checklist": [
+        "能说清 RwLock 的读共享、写独占语义，并区分 RwLock 与 Mutex 的适用边界",
+        "验收工程在本机 cargo run 通过，最终版本 2、3 条路由与预期一致，cargo test 5 passed，clippy 零警告、fmt 通过",
+        "能复现读锁升级被拒绝并说清正确修法（先放读锁、再拿写锁、写完重新检查），能说清写饥饿的成因与对策",
+        "能说清锁中毒的恢复方法（into_inner），读懂 E0277（守卫不是 Send）与 E0597（临时值借用）的成因与修法",
+        "跟练任务完成：读多写少计数器与网关路由表测试通过，读锁升级死锁已修复，Rustlings smart_pointers 组清完，卡点清单已更新"
+      ]
     }
   ]
 }
