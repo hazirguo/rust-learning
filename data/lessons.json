@@ -3629,6 +3629,173 @@
         "能区分「共享内存」与「消息传递」的适用场景，并说清项目 2 里两种 channel 各用在哪",
         "跟练任务完成：任务分发版求和与卡住修复的测试通过，Rustlings threads 组清完，卡点清单已更新"
       ]
+    },
+    {
+      "dayNumber": 20,
+      "weekNumber": 3,
+      "title": "项目 2 实操：多线程文件哈希器",
+      "lessonDate": "2026-11-14",
+      "goal": "用任务 channel + 结果 channel 写出多线程文件哈希器，与单线程版对比加速比，项目 2 验收达标。",
+      "summary": "项目 2 实操：两条 channel 搭起多线程文件哈希器，64 个 1 MiB 文件单线程与多线程结果一致，加速比约 1.8–2.7x，三个 drop 缺一不可。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "项目结构与数据流",
+              "minutes": "10 分钟",
+              "detail": "读核心讲解第 1-2 节，画出任务分发与结果聚合的两条 channel"
+            },
+            {
+              "label": "哈希选型与计时方法",
+              "minutes": "10 分钟",
+              "detail": "读第 3-4 节：DefaultHasher 的定位、Instant 计时、加速比的上限"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "20 分钟",
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），跑两次看加速比波动"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "20 分钟",
+              "detail": "做跟练任务与自测题，把项目 2 落到自己的目录里"
+            }
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "今天是第 3 周的项目实操课：前五天学的 Box / Rc / Arc / Mutex / RwLock / Send / Sync / channel 在这里第一次合流成一个完整程序——多线程文件哈希器。主线程经任务 channel 把文件路径分发给 N 个 worker，每个 worker 读文件、算哈希，再经结果 channel 把结果发回主线程聚合，最后与单线程版逐项比对、打印耗时与加速比。项目 2 的验收标准是「能跑、有对比数据、clippy 零警告」，今天全部做完；第 4 周会在这个项目上继续加 workspace 组织与基准测试。"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 项目架构：两条 channel，一条流水线"
+        },
+        {
+          "kind": "paragraph",
+          "text": "主线程发 PathBuf（文件路径）进任务 channel，N 个 worker 抢着取；发完所有任务就 drop(task_tx)——这是 worker 的退出信号，任务 channel 一关闭，recv 返回 Err，worker 退出循环。每个 worker 算完一个文件就把 (PathBuf, io::Result<u64>) 发回结果 channel；注意结果里包的是 io::Result，worker 内部的读文件错误不要在 worker 里 unwrap 掉，要原样发回主线程，由主线程用 ? 统一传播。主线程先 drop 自己手里的 result_tx（否则结果 channel 永远等不到关闭，for ... in result_rx 收不完），再收齐结果、排序、与单线程版逐项比对、打印耗时。线程之间的关系是典型的「你算一段、把结果给我」，所以任务分发与结果聚合都走 channel；worker 之间不共享任何可变状态——这正是「通过通信来共享内存」的标准用法。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 为什么发「路径」不发「内容」"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "内存账：64 个 1 MiB 文件就是 64 MiB 全在内存里排队，真实场景（扫描几 GB 的目录）直接撑爆内存。发路径只 move 一个几十字节的 PathBuf，文件内容由 worker 按 8 KiB 分块边读边算，内存占用恒定在一个缓冲区。",
+            "I/O 账：主线程读文件是单线程串行读，worker 再多也省不掉这段串行时间；让每个 worker 自己打开文件读，读 I/O 本身也并行了。",
+            "规则：channel 里传「怎么做」的描述（路径、编号、范围），不传「做」的数据本身——除非数据本身就很小。send 会把值 move 走，主线程发任务时要 p.clone() 一份再发。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "3. mpsc 是单消费者：多个 worker 抢任务要靠 Arc<Mutex<Receiver>>"
+        },
+        {
+          "kind": "paragraph",
+          "text": "mpsc::channel 的 Receiver 只有一份、不能 clone——它是单消费者。标准库里的标准写法是把 Receiver 包进 Arc<Mutex<...>>，每个 worker 取任务时先 lock 再 recv。锁只包住 recv() 这一句：recv 是阻塞的，没有任务时持有锁的 worker 会在 recv 里等着，其他 worker 在 lock() 上排队；任务一到，正在 recv 的 worker 拿到任务、释放锁，下一个 worker 再进来等。功能正确，但代价要说清楚：取任务这个动作被串行化了。任务本身很轻，串行取任务的开销相对哈希计算可以忽略；但如果任务是每微秒一个的高频小任务，这把锁就会成为瓶颈——那时该用 crossbeam 的多生产者多消费者 channel，它的 Receiver 本身就能 clone。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 哈希选型：DefaultHasher 能做什么、不能做什么"
+        },
+        {
+          "kind": "paragraph",
+          "text": "示例用标准库的 DefaultHasher（SipHash），快、零依赖。能做：判断两个文件内容是否相同、做哈希表内部散列、今天这种单线程与多线程结果是否一致的比对。不能做：防篡改校验——它不是密码学哈希，不抗碰撞攻击，不能替代 sha256sum。真正的校验工具要用 sha2 crate，把 hash_file 里的 DefaultHasher::new() 换成 Sha256::new() 即可，其余结构一行不用动。另外 DefaultHasher::new() 用固定密钥，同一份输入在不同次运行里结果稳定——示例两次运行打印的 file-000.bin -> 0xeb5828280379e0eb 完全相同，可以放心做回归比对。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 计时与加速比：为什么到不了 4 倍"
+        },
+        {
+          "kind": "paragraph",
+          "text": "计时用 std::time::Instant。示例 64 个 1 MiB 文件（共 64 MiB），本机 4 线程实测：单线程 61.71ms，多线程 35.08ms，加速比 1.76x；换一次运行是 57.82ms 对 21.39ms，加速比 2.70x——数字随机器负载波动，正常。加速比到不了 4 倍有三个原因：核心数是硬上限（哈希是 CPU 密集型，加速比超不过实际并行的核心数）；串行部分省不掉（生成文件、发任务、收结果、排序比对，Amdahl 定律）；文件太小（1 MiB 文件哈希约 1ms，线程创建、channel 往返、锁竞争的固定开销占比不小）。把文件改成 16 MiB 再测，加速比会更接近核心数——跟练任务 1 就是让你亲手验证这一点。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解与报错读法"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "误解「worker 越多越快」：worker 数超过核心数后，多出来的 worker 只是在抢 CPU 时间片，还要多付线程创建与上下文切换的开销。n_workers 取 available_parallelism() 的返回值，就是按核心数开 worker 的默认策略。",
+            "误解「忘了 drop(task_tx) 也没事」：task_tx 不 drop，任务 channel 永远不关闭，recv 永远等不到 Err，worker 永远不退出，主线程 join 时一直等下去——程序卡住。",
+            "误解「结果 channel 不用 drop(result_tx)」：for ... in result_rx 只认「channel 关闭」这个信号，不认「64 条」这个总数；主线程手里留着一份 result_tx，收完 64 条后继续等第 65 条——卡住。三个 drop 缺一不可。",
+            "E0277：Receiver<PathBuf> cannot be shared between threads safely——直接把 task_rx move 进多个 spawn 的闭包或试图 clone 它。修法：包进 Arc<Mutex<...>>，worker 每次取任务时先 lock。",
+            "程序跑完不退出、卡在 join 或 for ... in rx：先数 Sender 的份数，十有八九是漏了一个 drop。",
+            "assertion failed: single_sorted == multi：先别怀疑线程，检查测试文件在两次哈希之间是否被改写，或 hash_file 是否用了带随机种子的 hasher。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "三个 drop 缺一不可：发完任务 drop(task_tx) 让 worker 退出；主线程 drop(result_tx) 让结果收集循环结束；worker 退出时 clone 的发送端自动 drop。漏掉任何一个，程序都会卡住——先数 Sender 的份数，再查别的。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run --release、cargo test --release（5 passed）、cargo clippy --release -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑，零外部依赖，不用联网下载任何 crate。先 cargo new rust-day20 --bin，再把 src/main.rs 换成下面这份完整代码。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "src/main.rs 完整代码（零外部依赖）",
+          "code": "//! 第 20 天 · 项目 2 实操：多线程文件哈希器。\n//!\n//! 主线程经任务 channel 把文件路径分发给 N 个 worker，\n//! 每个 worker 读文件、算哈希，再经结果 channel 把结果发回主线程聚合，\n//! 最后与单线程版逐项比对、打印耗时与加速比。\n//! 零外部依赖：哈希用标准库的 DefaultHasher（SipHash），\n//! 不是密码学哈希，换 sha2 crate 只需改 `hash_file` 一处。\n\nuse std::collections::hash_map::DefaultHasher;\nuse std::fs;\nuse std::hash::{Hash, Hasher};\nuse std::io::{self, Read};\nuse std::path::{Path, PathBuf};\nuse std::sync::{Arc, Mutex, mpsc};\nuse std::thread;\nuse std::time::Instant;\n\n/// 对单个文件算哈希：按 8 KiB 分块读，边读边喂给 DefaultHasher。\n/// 分块读而不是 `fs::read` 整文件进内存——大文件也不会把内存撑爆。\nfn hash_file(path: &Path) -> io::Result<u64> {\n    let mut file = fs::File::open(path)?;\n    let mut hasher = DefaultHasher::new();\n    let mut buf = [0_u8; 8192];\n    loop {\n        let n = file.read(&mut buf)?;\n        if n == 0 {\n            break;\n        }\n        buf[..n].hash(&mut hasher);\n    }\n    Ok(hasher.finish())\n}\n\n/// 生成测试文件：每个文件 `file_bytes` 字节，内容由文件编号做种子、\n/// 用 xorshift 生成的确定性伪随机字节——每次运行内容相同，哈希可复现。\nfn make_test_files(dir: &Path, n_files: usize, file_bytes: usize) -> io::Result<Vec<PathBuf>> {\n    fs::create_dir_all(dir)?;\n    let mut paths = Vec::with_capacity(n_files);\n    for i in 0..n_files {\n        let path = dir.join(format!(\"file-{i:03}.bin\"));\n        let mut data = Vec::with_capacity(file_bytes);\n        let mut x: u64 = 0x9E37_79B9_7F4A_7C15u64.wrapping_add(i as u64);\n        while data.len() < file_bytes {\n            x ^= x << 13;\n            x ^= x >> 7;\n            x ^= x << 17;\n            data.extend_from_slice(&x.to_le_bytes());\n        }\n        data.truncate(file_bytes);\n        fs::write(&path, &data)?;\n        paths.push(path);\n    }\n    Ok(paths)\n}\n\n/// 单线程版：顺序算每个文件的哈希。\nfn hash_single_thread(paths: &[PathBuf]) -> io::Result<Vec<(PathBuf, u64)>> {\n    let mut out = Vec::with_capacity(paths.len());\n    for p in paths {\n        out.push((p.clone(), hash_file(p)?));\n    }\n    Ok(out)\n}\n\n/// 多线程版：任务 channel 分发路径，结果 channel 回传哈希。\n/// mpsc 的 Receiver 只有一份、不能 clone，所以用 `Arc<Mutex<Receiver>>`\n/// 让多个 worker 轮流取任务——这是标准库里实现「多消费者」的标准写法，\n/// 代价是取任务时要抢一把小锁；真正的多消费者 channel 在 crossbeam 里。\nfn hash_multi_thread(paths: &[PathBuf], n_workers: usize) -> io::Result<Vec<(PathBuf, u64)>> {\n    let (task_tx, task_rx) = mpsc::channel::<PathBuf>();\n    let (result_tx, result_rx) = mpsc::channel::<(PathBuf, io::Result<u64>)>();\n    let task_rx = Arc::new(Mutex::new(task_rx));\n\n    let mut handles = Vec::with_capacity(n_workers);\n    for _ in 0..n_workers {\n        let task_rx = Arc::clone(&task_rx);\n        let result_tx = result_tx.clone();\n        handles.push(thread::spawn(move || {\n            loop {\n                let task = {\n                    let rx = task_rx.lock().unwrap();\n                    rx.recv()\n                };\n                match task {\n                    Ok(path) => {\n                        let r = hash_file(&path);\n                        // 接收端若已关闭，send 失败也无所谓：直接丢掉，不 panic。\n                        let _ = result_tx.send((path, r));\n                    }\n                    Err(_) => break, // 任务 channel 关闭：没有更多任务，退出。\n                }\n            }\n        }));\n    }\n    drop(result_tx); // 主线程这份 result_tx 也要丢掉，否则结果收不完。\n\n    for p in paths {\n        task_tx.send(p.clone()).unwrap();\n    }\n    drop(task_tx); // 发完任务就关闭 channel：worker 取完任务就退出。\n\n    let mut out = Vec::with_capacity(paths.len());\n    for (path, r) in result_rx {\n        out.push((path, r?));\n    }\n    for h in handles {\n        h.join().unwrap();\n    }\n    Ok(out)\n}\n\nfn main() -> io::Result<()> {\n    let n_workers = thread::available_parallelism()\n        .map(|n| n.get())\n        .unwrap_or(4);\n    println!(\"本机可用并行度：{n_workers} 个线程\");\n\n    let dir = std::env::temp_dir().join(\"rust-day20-hash-bench\");\n    let n_files = 64;\n    let file_bytes = 1024 * 1024;\n    let paths = make_test_files(&dir, n_files, file_bytes)?;\n    println!(\"已生成 {n_files} 个测试文件，每个 {file_bytes} 字节\");\n\n    let t0 = Instant::now();\n    let single = hash_single_thread(&paths)?;\n    let single_elapsed = t0.elapsed();\n\n    let t0 = Instant::now();\n    let mut multi = hash_multi_thread(&paths, n_workers)?;\n    let multi_elapsed = t0.elapsed();\n\n    // 结果必须一致：按路径排序后逐项比较，顺序不同不算错。\n    let mut single_sorted = single.clone();\n    single_sorted.sort();\n    multi.sort();\n    assert_eq!(single_sorted, multi, \"单线程与多线程的哈希结果必须一致\");\n\n    println!(\"单线程：{single_elapsed:?}，多线程（{n_workers} worker）：{multi_elapsed:?}\");\n    let speedup = single_elapsed.as_secs_f64() / multi_elapsed.as_secs_f64();\n    println!(\"加速比：{speedup:.2}x\");\n    println!(\n        \"示例：{} -> {:#018x}\",\n        single_sorted[0].0.display(),\n        single_sorted[0].1\n    );\n\n    fs::remove_dir_all(&dir)?; // 清理测试数据。\n    Ok(())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn tmp_dir(name: &str) -> PathBuf {\n        std::env::temp_dir().join(format!(\"rust-day20-test-{name}\"))\n    }\n\n    #[test]\n    fn hash_is_deterministic() {\n        let dir = tmp_dir(\"deterministic\");\n        let _ = fs::remove_dir_all(&dir);\n        let paths = make_test_files(&dir, 3, 4096).unwrap();\n        let h1 = hash_file(&paths[0]).unwrap();\n        let h2 = hash_file(&paths[0]).unwrap();\n        assert_eq!(h1, h2, \"同一文件两次哈希必须相同\");\n        assert_ne!(h1, hash_file(&paths[1]).unwrap(), \"不同文件哈希应不同\");\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn empty_file_hashes_without_error() {\n        let dir = tmp_dir(\"empty\");\n        let _ = fs::remove_dir_all(&dir);\n        fs::create_dir_all(&dir).unwrap();\n        let empty = dir.join(\"empty.bin\");\n        fs::write(&empty, []).unwrap();\n        assert!(hash_file(&empty).is_ok());\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn single_and_multi_thread_agree() {\n        let dir = tmp_dir(\"agree\");\n        let _ = fs::remove_dir_all(&dir);\n        let paths = make_test_files(&dir, 12, 8192).unwrap();\n        let mut single = hash_single_thread(&paths).unwrap();\n        let mut multi = hash_multi_thread(&paths, 4).unwrap();\n        single.sort();\n        multi.sort();\n        assert_eq!(single, multi);\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn more_workers_than_files_still_works() {\n        let dir = tmp_dir(\"many-workers\");\n        let _ = fs::remove_dir_all(&dir);\n        let paths = make_test_files(&dir, 2, 4096).unwrap();\n        let mut out = hash_multi_thread(&paths, 8).unwrap();\n        assert_eq!(out.len(), 2);\n        out.sort();\n        let mut single = hash_single_thread(&paths).unwrap();\n        single.sort();\n        assert_eq!(out, single);\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn missing_file_returns_error() {\n        let missing = PathBuf::from(\"/tmp/rust-day20-no-such-file.bin\");\n        assert!(hash_file(&missing).is_err());\n        let paths = vec![missing];\n        assert!(hash_single_thread(&paths).is_err());\n    }\n}\n"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo run --release、cargo test --release、cargo clippy --release -- -D warnings、cargo fmt --check。预期输出（哈希值确定，每次相同；耗时与加速比随负载波动，1.76x–2.70x 都正常）：本机可用并行度：4 个线程；已生成 64 个测试文件，每个 1048576 字节；单线程：61.71ms，多线程（4 worker）：35.08ms；加速比：1.76x；示例：/tmp/rust-day20-hash-bench/file-000.bin -> 0xeb5828280379e0eb。cargo test 应报告 5 passed，clippy 与 fmt 静默通过。动手验证：删掉 drop(task_tx) 再跑，看程序为什么卡在 join 不退出；删掉 drop(result_tx) 再跑，看结果收完 64 条后为什么还在等；把 worker 数改成 1、2、8 各跑一次，记下加速比变化。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "画一张加速比表：文件大小分别改成 256 KiB、1 MiB、16 MiB，worker 数分别取 1、2、4、8，各跑一次 cargo run --release，记下单线程耗时、多线程耗时与加速比。验证：文件越大、加速比越接近核心数；worker 超过核心数后加速比不再上升。",
+            "让哈希器扫真实目录：给 main 加可选命令行参数（std::env::args 取第一个参数当目录，缺省用生成的测试文件），用 fs::read_dir 递归收集目录下所有文件路径，输出每文件的哈希与耗时。验收：扫自己的 ~/.cargo 目录（或任意代码目录）能跑完、结果条数与文件数一致。",
+            "换一个哈希算法：不用任何外部 crate，自己写 FNV-1a 哈希函数（64 位，初始值 0xcbf29ce484222325，每字节先 xor 再乘 0x100000001b3），替换 hash_file 里的 DefaultHasher，跑 cargo test 验证单线程与多线程结果仍然一致。",
+            "Rustlings：刷完 threads 组剩余题目（若已清完，改刷 smart_pointers 组剩余部分）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1 的加速比表已记录、能说清加速比到不了 worker 倍数的原因；跟练 2 扫真实目录能跑完且条数一致；跟练 3 的 FNV-1a 版测试通过；项目 2 的测试 5 passed、clippy 零警告、fmt 通过；能说清两条 channel 各自的关闭条件与三个 drop 的作用。"
+        },
+        {
+          "kind": "heading",
+          "text": "延伸"
+        },
+        {
+          "kind": "paragraph",
+          "text": "官方免费教材《The Rust Programming Language》第 16 章（fearless concurrency）可作今晚泛读，对照今天的两条 channel 复核一遍；想接真实 SHA-256 的话，看 sha2 crate 的文档（Digest trait 的 update / finalize 用法），第 4 周会正式接进来。明天第 21 天（周日）：第 3 周复盘——智能指针与并发自测，整理本周的卡点清单。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "项目 2 里任务 channel 与结果 channel 各传什么类型？两个 channel 的关闭条件分别是什么，主线程漏掉哪个 drop 会导致程序卡住？",
+          "a": "任务 channel 传 PathBuf（文件路径），结果 channel 传 (PathBuf, io::Result<u64>)（路径与哈希结果，错误也包在里面发回）。任务 channel 关闭的条件是所有 task_tx 都 drop（主线程发完任务必须 drop(task_tx)，否则 worker 永不退出）；结果 channel 关闭的条件是所有 result_tx 都 drop（主线程那份也要 drop(result_tx)，否则 for ... in result_rx 收完也等不到结束）。漏掉任何一个，程序都会卡在 join 或结果收集循环里。"
+        },
+        {
+          "q": "为什么任务要发文件路径 PathBuf，而不是先把文件内容读出来再发？从内存占用与 I/O 并行两个角度说。",
+          "a": "内存：发内容要把所有文件先读进内存排队，大目录直接撑爆内存；发路径只 move 几十字节，worker 按 8 KiB 分块边读边算，内存占用恒定。I/O：主线程先读是串行读，worker 自己读才能让读 I/O 也并行起来。"
+        },
+        {
+          "q": "mpsc::channel 的 Receiver 为什么不能直接 clone 给多个 worker？Arc<Mutex<Receiver>> 的写法有什么代价，真正的多消费者 channel 在哪个 crate 里？",
+          "a": "Receiver 不是 Sync，不能被多线程共享引用（mpsc 是单消费者设计）。Arc<Mutex<Receiver>> 让 worker 轮流取任务，代价是取任务这个动作被串行化了（锁包住阻塞的 recv），高频小任务时会成为瓶颈；真正的多消费者 channel 在 crossbeam（crossbeam-channel）里，它的 Receiver 本身就能 clone。"
+        },
+        {
+          "q": "DefaultHasher 能用来做文件防篡改校验（替代 sha256sum）吗？为什么？如果要换成真正的 SHA-256，示例代码要改几处？",
+          "a": "不能。DefaultHasher 是 SipHash，设计目标是哈希表内部散列、快而不是抗碰撞，不具备密码学哈希的安全性，不能替代 sha256sum。换 SHA-256 只改 hash_file 一处：把 DefaultHasher::new() 换成 sha2::Sha256，其余结构（channel、worker、计时、比对）一行不用动。"
+        },
+        {
+          "q": "加速比为什么到不了 worker 数的倍数？列出至少两个原因，并说说跟练任务 1 里「文件越大、加速比越接近核心数」背后的道理。",
+          "a": "原因至少两个：核心数是硬上限，哈希是 CPU 密集型，加速比超不过实际并行的核心数；串行部分省不掉（生成文件、发任务、收结果、排序比对），按 Amdahl 定律，串行占比决定加速比天花板。文件越大，单个任务的计算时间越长，线程创建、channel 往返、锁竞争这些固定开销的占比就越小，加速比越接近核心数。"
+        }
+      ],
+      "checklist": [
+        "项目 2 在本机跑通：64 个 1 MiB 文件，单线程与多线程哈希结果逐项一致，cargo run --release 打印出耗时与加速比",
+        "cargo test --release 5 passed，cargo clippy --release -- -D warnings 零警告，cargo fmt --check 通过",
+        "能说清两条 channel 各传什么、各在什么条件关闭、三个 drop 各防住哪种卡住",
+        "能说清 Arc<Mutex<Receiver>> 的写法与代价，以及 DefaultHasher 与 SHA-256 的适用边界",
+        "跟练任务完成：加速比表已记录、真实目录扫描能跑完、FNV-1a 替换版测试通过，Rustlings threads 组清完，卡点清单已更新"
+      ]
     }
   ]
 }
