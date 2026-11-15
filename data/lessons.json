@@ -3796,6 +3796,187 @@
         "能说清 Arc<Mutex<Receiver>> 的写法与代价，以及 DefaultHasher 与 SHA-256 的适用边界",
         "跟练任务完成：加速比表已记录、真实目录扫描能跑完、FNV-1a 替换版测试通过，Rustlings threads 组清完，卡点清单已更新"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读「核心讲解」第 1 节，对照表自查：盖住右列，看着左列能不能说出右列",
+              "label": "第三周主线速查",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "读第 2 节：Box / Rc / Arc 选型、RefCell 与 Mutex、Send 与 Sync、共享内存与消息传递",
+              "label": "四个易混概念辨析",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（run / test / clippy / fmt 四项全过），做跟练与自测题",
+              "label": "代码验证与自测",
+              "minutes": "20 分钟"
+            },
+            {
+              "detail": "跟练任务：清关第三周组、复核项目 2 的加速比数据、在清单里给第 3 周打勾",
+              "label": "Rustlings 清关与项目复核",
+              "minutes": "15 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 第三周主线速查：六天其实是「共享有代价，代价要选对地方付」的六种工具"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 1 周讲的是「谁拥有数据」，第 2 周讲的是「怎么表达不确定性和变化」，第 3 周讲的是「数据要在多方之间共享时，代价由谁来付」——Box、Rc、RefCell、Arc、Mutex、RwLock、channel，每种工具都在回答同一个问题：共享的代价是编译期付、运行期付，还是用锁和消息排队来付。"
+        },
+        {
+          "items": [
+            "第 15 天 Box：一句话核心是唯一的堆分配智能指针，把数据放进堆里，解决递归类型「大小算不出来」的问题。项目 2 里没用 Box——路径列表放 Vec<PathBuf> 就够了，不必为用而用。",
+            "第 16 天 Rc 与 RefCell：Rc 管「单线程多方共享所有权」，RefCell 管「单线程内部可变性」；借用检查从编译期挪到运行期，违规就 panic。单线程版里多个闭包共享一个计数器就是 Rc<RefCell<usize>> 的标准形态。",
+            "第 17 天 Arc 与 Mutex：Arc 是「能跨线程的 Rc」（原子计数），Mutex 是「跨线程的 RefCell」（互斥锁）；合起来就是多线程共享可变状态的标准写法。项目 2 用 Arc<Mutex<Receiver>> 让多个 worker 轮流从任务 channel 取任务。",
+            "第 18 天 RwLock：读多写少时用读写锁，多个读可以并行，只写才独占；代价是写者可能饿死、读锁升级会死锁。项目 2 没用到它——任务与结果都是「一次写入、一次读出」，没有「反复读、偶尔写」的共享数据。",
+            "第 19 天 Send、Sync 与 channel：Send 是「值能 move 进别的线程」，Sync 是「引用能被多线程共享」；数据在线程之间走 channel，不要走共享内存。项目 2 的全部线程间通信都走任务与结果两条 channel。",
+            "第 20 天 项目 2 实操：两条 channel 一条流水线，任务分发与结果聚合分开，关闭条件靠 drop 表达；加速比到不了 worker 倍数。64 个 1 MiB 文件，单线程 61.71ms 对多线程 35.08ms，加速比 1.76x；三个 drop 缺一不可。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "paragraph",
+          "text": "自查方法：盖住上面这张速查表的右半部分，看着左列的知识点名，能不能说出「一句话核心」和「项目 2 里的落点」。说不出来的那一行，就是今天要补的；补完再去做自测题。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 四个最容易混的概念辨析"
+        },
+        {
+          "kind": "heading",
+          "text": "（1）Box / Rc / Arc 不是三档「越来越强」，是三把解决不同问题的钥匙"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：Box 大致对应 std::unique_ptr（独占堆分配），Rc 对应 std::shared_ptr（共享所有权），Arc 是 std::shared_ptr 的原子计数版。选型的判断只有两步：数据要不要被多方共享？不要——用 Box（或者直接放栈上，根本不用智能指针）。要——进下一步：共享要不要跨线程？不要——用 Rc；要——用 Arc。还有两条容易踩的线：Rc 和 Arc 只解决「共享所有权」，不解决「共享可变性」——想改里面的数据，单线程要再包一层 RefCell，多线程要再包一层 Mutex 或 RwLock。反过来，只想「把数据放进堆里」或「让递归类型能编译」时，用 Box 就够了，包 Rc/Arc 是白付引用计数的代价。第 15 天的教训在这里重现：项目 2 的 Vec<PathBuf> 根本不需要任何智能指针——「不需要共享」时，普通的所有权就是最便宜的答案。"
+        },
+        {
+          "kind": "heading",
+          "text": "（2）RefCell 与 Mutex：同一条借用规则，一个在编译期查、一个在运行期查"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 1 周的借用检查器是编译期的：同一时刻要么多个 &T，要么一个 &mut T，违反就编译不过。RefCell 把这条规则搬到运行期：borrow() 相当于拿 &T，borrow_mut() 相当于拿 &mut T，违反时不报编译错、直接 panic。Mutex 也是一样，只不过它跨线程：lock() 拿到 MutexGuard（相当于 &mut T 的守卫），冲突时不是 panic、而是阻塞等锁。分工是：RefCell 管单线程内部可变性，代价是运行时 panic 的风险，好处是不用锁、没有线程开销；Mutex 管多线程共享可变性，代价是锁竞争与死锁的可能，好处是跨线程安全。还有一条硬线：RefCell 不是 Sync——因为它的借用标记是普通计数器，两个线程同时改会数据竞争，所以编译器直接禁止 &RefCell<T> 跨线程共享。Mutex 是 Sync——因为它内部有真正的互斥原语，多个线程可以同时持有 &Mutex<T>、轮流上锁。这就是第 19 天讲的「Sync 与否看的是内部有没有同步机制」，今天第一次有了具体的正反例子。"
+        },
+        {
+          "kind": "heading",
+          "text": "（3）Send 与 Sync 的判据只有两句话，拿它去套每个类型"
+        },
+        {
+          "kind": "paragraph",
+          "text": "判据是：T: Send 当且仅当「T 的值能 move 进别的线程」；T: Sync 当且仅当「&T 能被多个线程同时持有」。套到本周的类型上：Rc<T> 不是 Send，因为引用计数是普通 usize 加减，两个线程同时 clone 会丢计数；Arc<T> 是 Send，因为计数用原子操作。RefCell<T> 不是 Sync，因为借用标记不是原子的，两个线程同时 borrow_mut 会互相踩；Mutex<T> 是 Sync，因为锁本身就是同步原语。MutexGuard<T> 不是 Send：守卫跨线程会把锁带到别的线程去解锁，标准库直接禁掉——这是「锁必须在加锁的线程释放」的编译期保证，对照 C++ 里 std::lock_guard 同样不可跨线程传递。&T 是不是 Send，取决于 T 是不是 Sync：&Mutex<T> 可以跨线程传，因为 Mutex<T> 是 Sync；&RefCell<T> 不能跨线程传，因为 RefCell<T> 不是 Sync。记住这个套法，以后看 Firecracker、Cloud Hypervisor 源码里「这个结构为什么包 Arc、那个为什么包 Mutex」，先问一句「它要跨线程吗、它要被多线程同时读吗」，答案往往就藏在这两个判据里。"
+        },
+        {
+          "kind": "heading",
+          "text": "（4）共享内存与消息传递：项目 2 的取舍就是判断标准"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 19 天的格言是「不要通过共享内存来通信，要通过通信来共享内存」。项目 2 的结构就是这句格言的对照实验：任务分发与结果聚合走 channel——worker 之间不需要看到彼此的状态，只需要「拿到任务、交回结果」，用 channel 最干净；只有一处走 Arc<Mutex<...>>，就是多个 worker 抢同一个任务 Receiver——因为标准库 mpsc 的 Receiver 是单消费者，多个 worker 要共享它，别无选择，只能用锁包起来，代价是取任务被串行化了。判断标准可以收成一句话：如果线程之间只需要交换「做完的结果」，用 channel；如果线程之间真的需要「同时看到同一份可变状态」，才用 Arc<Mutex<T>>。反过来，凡是看到 Arc<Mutex<Vec<...>>> 被各线程轮流 push 结果的写法，先停下来想一想：这份 Vec 是不是其实可以换成一条结果 channel？项目 2 的结果聚合如果改成 Arc<Mutex<Vec>>，主线程就得轮询「收齐了没有」，而 channel 版是「收完自动结束」——结构越简单，关闭条件越不容易漏。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 锁的持有范围与毒锁：MutexGuard 是 RAII 守卫"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Mutex::lock() 返回的 MutexGuard 是 RAII 守卫：拿到它就是上了锁，drop 它就是解了锁。锁的持有范围就是守卫活着的范围——这条规则管着本周所有与锁有关的代码：项目 2 里 let rx = task_rx.lock().unwrap(); rx.recv() 的锁只包住 recv() 这一句，任务一到，worker 拿到任务就释放锁，下一个 worker 再进来等；今天示例的 multi_thread_total 更进一步——每个线程先在本地累加，攒够 1000 次再一次性上锁合并，锁只拿一次。反面例子是「拿着锁做耗时操作」：在锁里读文件、调网络、等另一个 channel，等于把所有等这把锁的线程一起拖住。判断标准：锁里只放「改数据」那几行，I/O 与计算都挪到锁外面。毒锁（poisoned）：一个线程拿着锁时 panic，锁就被标记为「中毒」——数据可能处于改了一半的状态。之后 lock() 不再直接返回守卫，而是返回 Err(PoisonError)；想继续用数据，调 into_inner() 取出来，但要自己承担「数据可能不一致」的责任。项目 2 的 worker 里 hash_file 失败是包进 io::Result 发回主线程，而不是在锁里 unwrap——锁里 panic 不只会毒掉一把锁，还会让等锁的线程全都拿到 Err。守则很简单：锁里不放可能 panic 的代码。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 今天不做的事：不提前学第 4 周的内容"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 4 周是 crate 与 workspace 组织、单元测试与基准测试（criterion）、crossbeam 的多消费者 channel。今天如果 Rustlings 提前刷到相关组，看到不懂的题先跳过、记进卡点清单，不要今天就开新课。周日验收课的任务是「把第三周收干净」，不是「把第四周提前学完」。清单第三周的验收句是两条：能说清 Arc<Mutex<T>> 的适用与误用场景；项目 2 有对比数据——对照它自查，达标就收工。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run、cargo test（4 passed）、cargo clippy -- -D warnings、cargo fmt --check 四项全部通过。照抄就能跑，零外部依赖，不用联网下载任何 crate。它把本周六个知识点串在一个程序里：Box（递归表达式树）、Rc<RefCell>（单线程共享计数）、Arc<Mutex>（多线程共享计数）、mpsc channel（消息传递聚合），三种共享方式算同一个总数、结果必须一致。"
+        },
+        {
+          "caption": "src/main.rs（完整代码，先 cargo new rust-day21 --bin，再替换 src/main.rs）",
+          "code": "//! 第 21 天 · 第三周复盘验收：Box、Rc、Arc、Mutex、channel 一次串起来。\n//!\n//! 三种共享方式算同一个总数：单线程 Rc<RefCell>、多线程 Arc<Mutex>、\n//! channel 聚合。结果必须一致——共享的姿势不同，答案不能不同。\n\nuse std::cell::RefCell;\nuse std::rc::Rc;\nuse std::sync::{Arc, Mutex, mpsc};\nuse std::thread;\n\n/// 递归类型必须用 Box：没有它，枚举的大小是无限的，编译器算不出 `Expr` 占多少字节。\n#[derive(Debug)]\nenum Expr {\n    Num(i64),\n    Add(Box<Expr>, Box<Expr>),\n    Mul(Box<Expr>, Box<Expr>),\n}\n\nfn eval(e: &Expr) -> i64 {\n    match e {\n        Expr::Num(n) => *n,\n        Expr::Add(a, b) => eval(a) + eval(b),\n        Expr::Mul(a, b) => eval(a) * eval(b),\n    }\n}\n\n/// 单线程共享计数：Rc 管「多方共享所有权」，RefCell 管「内部可变性」。\n/// 每个闭包 clone 一份 Rc，改数时 `borrow_mut()` 在运行期做借用检查。\nfn single_thread_total(n_workers: usize, per_worker: usize) -> usize {\n    let total = Rc::new(RefCell::new(0_usize));\n    let mut jobs = Vec::new();\n    for _ in 0..n_workers {\n        let t = Rc::clone(&total);\n        jobs.push(move || {\n            for _ in 0..per_worker {\n                *t.borrow_mut() += 1;\n            }\n        });\n    }\n    for job in jobs {\n        job();\n    }\n    *total.borrow()\n}\n\n/// 多线程共享计数：Arc 管「跨线程共享所有权」，Mutex 管「跨线程互斥」。\n/// 每个线程先在本地累加，攒够了再一次性上锁合并——锁只拿一次，\n/// 而不是每加 1 就抢一次锁。锁的持有范围越小，线程之间等得越少。\nfn multi_thread_total(n_workers: usize, per_worker: usize) -> usize {\n    let total = Arc::new(Mutex::new(0_usize));\n    let mut handles = Vec::new();\n    for _ in 0..n_workers {\n        let t = Arc::clone(&total);\n        handles.push(thread::spawn(move || {\n            let mut local = 0_usize;\n            for _ in 0..per_worker {\n                local += 1;\n            }\n            *t.lock().unwrap() += local;\n        }));\n    }\n    for h in handles {\n        h.join().unwrap();\n    }\n    *total.lock().unwrap()\n}\n\n/// 消息传递版：worker 之间不共享任何可变状态，各算各的，\n/// 算完把部分和发回主线程聚合。主线程 `drop(tx)` 后，\n/// `rx.iter()` 在收到全部部分和、channel 关闭时自然结束。\nfn channel_total(n_workers: usize, per_worker: usize) -> usize {\n    let (tx, rx) = mpsc::channel::<usize>();\n    let mut handles = Vec::new();\n    for _ in 0..n_workers {\n        let tx = tx.clone();\n        handles.push(thread::spawn(move || {\n            tx.send(per_worker).unwrap();\n        }));\n    }\n    drop(tx);\n    let total: usize = rx.iter().sum();\n    for h in handles {\n        h.join().unwrap();\n    }\n    total\n}\n\nfn main() {\n    let expr = Expr::Add(\n        Box::new(Expr::Num(2)),\n        Box::new(Expr::Mul(Box::new(Expr::Num(3)), Box::new(Expr::Num(4)))),\n    );\n    println!(\"2 + 3 * 4 = {}\", eval(&expr));\n\n    let n_workers = 4;\n    let per_worker = 1000;\n    let single = single_thread_total(n_workers, per_worker);\n    let multi = multi_thread_total(n_workers, per_worker);\n    let channeled = channel_total(n_workers, per_worker);\n    println!(\"单线程 Rc<RefCell>：{single}\");\n    println!(\"多线程 Arc<Mutex>：{multi}\");\n    println!(\"channel 聚合：{channeled}\");\n    assert_eq!(single, multi);\n    assert_eq!(multi, channeled);\n    println!(\"三种共享方式结果一致：{single}（{n_workers} 个 worker × 每人 {per_worker} 次）\");\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn eval_arithmetic() {\n        let expr = Expr::Add(\n            Box::new(Expr::Num(2)),\n            Box::new(Expr::Mul(Box::new(Expr::Num(3)), Box::new(Expr::Num(4)))),\n        );\n        assert_eq!(eval(&expr), 14);\n    }\n\n    #[test]\n    fn three_sharing_styles_agree() {\n        assert_eq!(single_thread_total(4, 100), 400);\n        assert_eq!(multi_thread_total(4, 100), 400);\n        assert_eq!(channel_total(4, 100), 400);\n    }\n\n    #[test]\n    fn rc_clones_share_one_counter() {\n        let total = Rc::new(RefCell::new(0_usize));\n        let a = Rc::clone(&total);\n        let b = Rc::clone(&total);\n        *a.borrow_mut() += 1;\n        *b.borrow_mut() += 1;\n        assert_eq!(*total.borrow(), 2);\n        assert_eq!(Rc::strong_count(&total), 3);\n    }\n\n    #[test]\n    fn one_worker_still_works() {\n        assert_eq!(multi_thread_total(1, 50), 50);\n        assert_eq!(channel_total(1, 50), 50);\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "运行方法",
+          "code": "cargo run\ncargo test\ncargo clippy -- -D warnings\ncargo fmt --check",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "预期输出（确定性输出，与环境无关）：2 + 3 * 4 = 14；单线程 Rc<RefCell>：4000；多线程 Arc<Mutex>：4000；channel 聚合：4000；三种共享方式结果一致：4000（4 个 worker × 每人 1000 次）。cargo test 应报告 4 passed；cargo clippy -- -D warnings 与 cargo fmt --check 应静默通过（无输出即通过）。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 multi_thread_total 里的本地累加改成「每加 1 就 lock().unwrap() 一次」，跑 cargo run 对比耗时，体会「锁的持有范围与抢锁次数」对性能的影响；把 Expr 里的 Box<Expr> 换成直接的 Expr，看编译器报什么错（提示：recursive type has infinite size）；把 channel_total 里的 drop(tx) 删掉，看 rx.iter().sum() 为什么永远等不到结束，再把 drop(tx) 加回来。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "Rustlings 清关：跑 rustlings verify，把 smart_pointers、threads 两组里剩余的题清完；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。",
+            "项目 2 复核：重跑第 20 天的哈希器，把加速比表（256 KiB / 1 MiB / 16 MiB × worker 1 / 2 / 4 / 8）补齐到能说清「文件越大、加速比越接近核心数」为止；再用它扫一次真实目录，确认结果条数与文件数一致。",
+            "默写第三周对照表：不看「核心讲解」第 1 节，凭记忆写出六天知识点的「一句话核心」和「项目 2 里的落点」，写完再对照原文补漏；漏掉超过两处就把那几天的资料重读一遍。",
+            "整理卡点清单并在清单文件里给第 3 周打勾：列出本周仍卡住的概念（不超过 10 条，每条写「卡在哪一行 + 对应的规则猜测」），在 Rust-12周学习清单.md 第三至四周下打勾并记一句本周卡点（比如「Rc 不是 Send 因为计数不是原子的」或「取任务的锁只包住 recv 一句」）。"
+          ],
+          "verification": "Rustlings 第三周两组全部通过；验收工程 cargo run 输出与预期一致、cargo test 4 passed、clippy 零警告、fmt 通过；项目 2 的加速比表已补齐且能说清三个加速比上限原因；能不查书写出第三周对照表并说清每条卡点对应的规则。"
+        }
+      ],
+      "checklist": [
+        "能不查书写出第三周六个知识点的对照表（Box / Rc 与 RefCell / Arc 与 Mutex / RwLock / Send 与 Sync 与 channel / 项目 2），并各举一个项目 2 里的落点",
+        "验收工程在本机 cargo run 通过，输出与预期一致，cargo test 4 passed，clippy 零警告、fmt 通过",
+        "能解释 Box / Rc / Arc 的选型两步判断、RefCell 与 Mutex 的编译期与运行期借用检查、Send 与 Sync 的两句判据、共享内存与消息传递的取舍",
+        "Rustlings 第三周两组（smart_pointers、threads）全部通过，卡点清单已更新",
+        "项目 2 复核完成：加速比表已补齐、真实目录扫描条数一致，清单第三周已打勾并记一句卡点"
+      ],
+      "dayNumber": 21,
+      "goal": "不查书复盘第三周六个知识点，对照清单验收句自查：能说清 Arc<Mutex<T>> 的适用与误用场景，项目 2 有对比数据。",
+      "lessonDate": "2026-11-15",
+      "quiz": [
+        {
+          "a": "Box 解决「把数据放进堆里 / 让递归类型能编译」，只管独占所有权；Rc 解决「单线程多方共享所有权」（引用计数）；Arc 解决「多线程多方共享所有权」（原子引用计数）。判断两步：不要多方共享就用 Box（或直接放栈上）；要共享、不跨线程用 Rc；要共享、跨线程用 Arc。只想把数据放进堆里时用 Box 就够了，包 Rc/Arc 是白付引用计数的代价。",
+          "q": "Box、Rc、Arc 各解决什么问题？按「要不要多方共享、要不要跨线程」两步判断，分别在什么情况下选哪个？只想把数据放进堆里时该用哪个？"
+        },
+        {
+          "a": "判据：T: Send 是「T 的值能 move 进别的线程」，T: Sync 是「&T 能被多个线程同时持有」。RefCell 的借用标记是普通计数器，多线程同时改会数据竞争，所以不是 Sync；Mutex 内部有真正的互斥原语，多线程可以同时持有 &Mutex<T> 轮流上锁，所以是 Sync。Rc 的引用计数是普通加减，多线程同时 clone 会丢计数，所以不是 Send；Arc 的计数是原子操作，所以是 Send。",
+          "q": "RefCell<T> 为什么不是 Sync，而 Mutex<T> 是 Sync？Rc<T> 为什么不是 Send，而 Arc<T> 是 Send？用 Send / Sync 的两句判据回答。"
+        },
+        {
+          "a": "MutexGuard 跨线程会把锁带到别的线程去解锁，标准库直接禁掉——这是「锁必须在加锁的线程释放」的编译期保证。C++ 的 std::lock_guard 同样不可复制、不可跨线程传递。锁里 panic 会让锁中毒：之后 lock() 返回 Err(PoisonError)，等锁的线程全都拿不到守卫；所以锁里只放「改数据」那几行，I/O、计算与可能 panic 的代码都挪到锁外面。",
+          "q": "MutexGuard 为什么不是 Send？它和 C++ 的 std::lock_guard 在这点上有什么共同点？锁里为什么不能放可能 panic 的代码？"
+        },
+        {
+          "a": "唯一一处是 Arc<Mutex<Receiver>>：多个 worker 要共享同一个任务 Receiver，而标准库 mpsc 的 Receiver 是单消费者、不能 clone，别无选择只能用锁包起来。结果聚合改成 Arc<Mutex<Vec>> 的问题：主线程要轮询「收齐了没有」，关闭条件不再由 channel 的关闭自动表达，容易漏判；而且每次 push 都要抢锁，结果收集本身被串行化，而 channel 版是「收完自动结束」、结构更简单。",
+          "q": "项目 2 里任务分发与结果聚合走 channel，只有一处用了 Arc<Mutex<...>>——是哪一处、为什么别无选择？如果把结果聚合改成 Arc<Mutex<Vec<...>>> 让各线程轮流 push，会有什么问题？"
+        },
+        {
+          "a": "每加 1 就抢一次锁，4000 次累加就要抢 4000 次锁，锁竞争与上下文切换的开销会盖过计算本身；线程越多、抢得越凶，加速比越难看。原则：锁的持有范围越小越好——锁里只放「改共享数据」那几行，计算先在本地做完再一次性合并；拿着锁不做 I/O、不做耗时计算、不调可能阻塞的操作。",
+          "q": "multi_thread_total 里每个线程先在本地累加、最后一次性上锁合并；如果改成每加 1 就抢一次锁，会有什么后果？这说明了锁的持有范围应该遵循什么原则？"
+        }
+      ],
+      "summary": "第三周复盘：Box / Rc / Arc 选型、RefCell 与 Mutex、Send 与 Sync 判据、共享内存与消息传递的取舍，三种共享方式一次串起来验收。",
+      "title": "第三周复盘：智能指针与并发自测",
+      "weekNumber": 3
     }
   ]
 }
