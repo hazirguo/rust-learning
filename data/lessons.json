@@ -3977,6 +3977,269 @@
       "summary": "第三周复盘：Box / Rc / Arc 选型、RefCell 与 Mutex、Send 与 Sync 判据、共享内存与消息传递的取舍，三种共享方式一次串起来验收。",
       "title": "第三周复盘：智能指针与并发自测",
       "weekNumber": 3
+    },
+    {
+      "dayNumber": 22,
+      "weekNumber": 4,
+      "title": "crate、模块与 workspace：把项目装进一个工作区",
+      "lessonDate": "2026-11-16",
+      "goal": "说清 package、crate、module、workspace 的嵌套关系，用 pub 三档与 re-export 控制可见性，把项目 1 改造成 workspace 并一次跑完全部测试。",
+      "summary": "package、crate、module、workspace 四层嵌套：mod 声明模块树、pub 三档管可见性、re-export 做公开门面，workspace 用 path 依赖把库 crate 与二进制 crate 管在一起。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "四个概念分清楚",
+              "minutes": "10 分钟",
+              "detail": "读「核心讲解」第 1 节，对照 C++ 的库与头文件理解"
+            },
+            {
+              "label": "模块与可见性",
+              "minutes": "15 分钟",
+              "detail": "读第 2-3 节：mod 树、pub 三档、re-export，记住 E0603 的读法"
+            },
+            {
+              "label": "workspace 组织",
+              "minutes": "10 分钟",
+              "detail": "读第 4 节：工作区结构、path 依赖、workspace 依赖"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "15 分钟",
+              "detail": "敲一遍可运行示例（test --workspace / run / clippy / fmt 四项全过），动手改两处看报错"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "10 分钟",
+              "detail": "做跟练任务与自测题，把项目 1 改造成 workspace 结构"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. 四个概念：package、crate、module、workspace"
+        },
+        {
+          "kind": "paragraph",
+          "text": "这是 Rust 工程化的四块积木。package 是一个 Cargo.toml 描述的发布单元，包含 0 个或多个 crate，cargo new 建的就是它（对照 C++ 的一个 CMake 工程）；crate 是一个编译单元，分库 crate（src/lib.rs）和二进制 crate（src/main.rs）两种，对照一个 .a/.so 库或一个可执行程序；module 是 crate 内部组织代码的命名空间树，由 mod 声明、use 引入路径，对照 C++ 的 namespace 加头文件/源文件分工；workspace 是多个 package 的集合，共享一个 Cargo.lock 与一个 target/ 输出目录，对照顶层 CMakeLists 加多个 add_subdirectory 的超级工程。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "四者的嵌套关系是：workspace 包含 package，package 包含 crate，crate 包含 module。新手最容易混的是前两个：cargo new foo 建出的是一个 package，这个 package 默认恰好包含一个 crate（src/main.rs，二进制 crate）；cargo new foo --lib 建的 package 则包含一个库 crate（src/lib.rs）。一个 package 可以同时包含一个库 crate 和多个二进制 crate——src/lib.rs 加 src/bin/xxx.rs 就是这种结构。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "为什么需要 workspace？项目 1（日志分析 CLI）和项目 2（文件哈希器）如果各自独立成仓，有两个麻烦：公共逻辑要么复制粘贴、要么发到 crates.io 才能共享；各自的 Cargo.lock 与 target/ 各管各的，编译缓存不共享。workspace 的解法是：把公共逻辑抽成一个库 crate（比如今天示例的 loglib），两个二进制 crate 用 path 依赖引用它，三个 crate 共用一个 Cargo.lock、一个 target/，cargo test --workspace 一次跑完全部测试。Firecracker、Cloud Hypervisor 都是这样组织：几十个 crate、一个 workspace——第 9 周读源码时，你每天面对的就是这种结构。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 模块树：mod 声明的是结构，不是文件"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rust 的模块系统有一条与 C++ 不同的根本规则：模块树由 mod 声明决定，文件只是模块内容的存放处。在 src/lib.rs 里写 pub mod parse; 的意思是「这个 crate 的根模块下有一个子模块 parse，内容在 src/parse.rs 里」。文件必须存在，否则编译报错；但反过来，src/ 下多放一个没被 mod 声明的 .rs 文件，编译器根本不会看它——文件本身不产生模块，声明才产生。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "模块内部还可以继续嵌套：parse.rs 里写 pub mod detail;，内容在 src/parse/detail.rs。一个模块里的项（函数、struct、enum、常量）默认是私有的，只有当前模块和它的子模块能看见。想让外部用，必须加 pub。对照 C++：这相当于头文件里的声明——pub fn 是写进公开头文件的函数声明，没加 pub 的是只在 .c 文件内部用的 static 函数。区别是 C++ 靠「头文件写没写」控制可见性，Rust 靠 pub 关键字控制，可见性是语言层面的保证。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "路径怎么写：模块内引用同级项用 super::（父模块）或 crate::（crate 根）。今天示例的 stats.rs 写的是 use crate::parse::{is_blank, parse_level, Level};——从 crate 根出发的绝对路径，比相对路径更不容易在模块移动后断掉。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 可见性的三档：pub、pub(crate) 与私有"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "默认私有：只有当前模块及其子模块能用——模块内部的小工具函数",
+            "pub(crate)：整个 crate 内部能用，外部 crate 看不见——库内部各模块共享、但不想公开的工具（今天的 is_blank）",
+            "pub：所有人，包括别的 crate——公开 API"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "pub use（re-export，重新导出）是第四个工具：库可以在根模块里把深层模块的项「转发」出来，调用方写 loglib::count_levels 就行，不必知道它其实住在 stats 模块里。对照 C++：相当于公开头文件里把符号暴露在顶层命名空间——调用方只记一个入口，内部重构时只要 re-export 不变，调用方一行代码都不用改。好的库设计会把 re-export 当作「公开 API 的门面」来经营：深层模块可以随便重构，门面保持稳定。"
+        },
+        {
+          "kind": "callout",
+          "text": "报错读法 E0603：今天已实测，从 logcount 里调用 loglib::parse::is_blank，编译器报 error[E0603]: function 'is_blank' is private。报错说的是「私有」，不是「不存在」——编译器知道这个函数存在，只是不让你用。修法只有两条路：要么在调用方改用公开的 API（count_levels），要么在库里把 is_blank 升级成 pub 或 pub(crate)——后者只对同一 crate 有效，跨 crate 共享必须用 pub。C++ 程序员容易犯的错是「把所有函数都标 pub 省事」——这等于把内部实现细节全写进公开头文件，之后一改就破坏兼容性；正确做法是默认私有，只把真正要承诺的东西标 pub。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. workspace：一个根 Cargo.toml 管多个 crate"
+        },
+        {
+          "kind": "paragraph",
+          "text": "一个最小 workspace 的根 Cargo.toml 只有三行：[workspace]、members = [\"crates/loglib\", \"crates/cli\"]、resolver = \"2\"。注意：workspace 根目录本身不是一个 package——它没有 [package]，没有 src/，cargo build 在根目录下跑，会构建全部成员；cargo run -p logcount 用 -p 指定跑哪一个成员。resolver = \"2\" 是新版依赖解析器（2021 edition 的默认）。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "path 依赖是 workspace 内部 crate 互相引用的方式：loglib = { path = \"../loglib\" } 的意思是「这个依赖不要去 crates.io 找，就用隔壁目录的那个 crate」。改 loglib 的代码，logcount 下次构建自动用新版，不用发版、不用改版本号。这是 workspace 最实用的地方：公共逻辑抽成库 crate，改一处、所有二进制 crate 一起受益。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "[workspace.dependencies]（工作区统一依赖）解决的是另一个问题：成员多了之后，每个 Cargo.toml 都写 serde = \"1.0\"，版本会慢慢 drift。写法是根 Cargo.toml 里集中声明，[workspace.dependencies] 下写 serde = \"1.0\"，各成员写 serde.workspace = true 继承它。版本只改一个地方，全工作区同步。今天的示例只有两个成员、没有外部依赖，所以没用到它；第 5 周网关项目（Tokio、axum、tracing 多个成员共享依赖）时会正式用上。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "cargo test --workspace：跑全部成员的测试（今天的示例：loglib 5 个测试 + logcount 0 个，一次出结果）",
+            "cargo build --workspace --release / cargo clippy --workspace -- -D warnings / cargo fmt --check：构建、检查、格式化的工作区版本",
+            "cargo tree -p logcount：打印某个成员的依赖树，排查「到底用了哪个版本的 serde」时用得上"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "5. 常见误解"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "「一个文件就是一个模块，目录结构就是模块树。」错。文件只是存放处，mod 声明才是模块树。src/ 下放一个没声明的 .rs 文件，编译器直接忽略；反过来 mod foo; 声明了，src/foo.rs 不存在就报错。",
+            "「pub 标得越多越方便，反正都是自己的代码。」错。pub 是你对调用方做的承诺：标成 pub 的项，改名、改签名、删掉都会破坏调用方。库的公开 API 应该像产品说明书一样克制——只放调用方真正需要的，内部实现随时可改。",
+            "「workspace 就是把几个项目放在一个文件夹里。」错。workspace 的关键是共享的 Cargo.lock 与 target/，以及成员之间用 path 依赖互相引用。只是放在一个文件夹里、各自有独立 Cargo.lock 的几个项目，不是 workspace，只是邻居。",
+            "「use 是把代码复制过来。」错。use 只是给一个长路径起个短名字（导入路径），不产生任何代码、不复制、不链接。use crate::parse::Level; 之后写 Level 就行，但 Level 还是住在 parse 模块里。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "6. 今天不做的事"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "宏（macro）与过程宏：#[derive] 之外，自定义宏是另一套机制，第 5 周之后按需再学",
+            "pub(super) / pub(in path) 等细粒度可见性：只在大型 crate 内部组织时才需要，今天三档够用",
+            "发布到 crates.io：cargo publish 的流程、版本号语义（semver）与 yank，第 11-12 周毕业项目上 GitHub 时再讲",
+            "基准测试（criterion）：第 24 天（周三）的课题，今天先把组织结构搭好"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo test --workspace（5 passed）、cargo run -p logcount -- sample.log（输出与预期一致）、cargo clippy --workspace -- -D warnings、cargo fmt --check 四项全部通过。它是一个最小 workspace：一个库 crate loglib（解析 + 统计）加一个二进制 crate logcount（读文件、打印结果），复用项目 1 的日志解析思路，但按 crate 与模块重新组织。另有一处未放进正文的验证：从 logcount 调用私有的 is_blank 会报 E0603（function 'is_blank' is private），已实测确认。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "目录结构：rust-day22/ 下有 Cargo.toml（workspace 根：只有 [workspace]，没有 [package]）、sample.log（测试用的日志文件），以及 crates/loglib/（库 crate：Cargo.toml、src/lib.rs、src/parse.rs、src/stats.rs）和 crates/cli/（二进制 crate：Cargo.toml、src/main.rs）。先建目录：mkdir -p rust-day22/crates/loglib/src rust-day22/crates/cli/src，再按顺序写文件。"
+        },
+        {
+          "kind": "code",
+          "caption": "根 Cargo.toml（workspace 声明）",
+          "lang": "toml",
+          "code": "[workspace]\nmembers = [\"crates/loglib\", \"crates/cli\"]\nresolver = \"2\""
+        },
+        {
+          "kind": "code",
+          "caption": "crates/loglib/Cargo.toml",
+          "lang": "toml",
+          "code": "[package]\nname = \"loglib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]"
+        },
+        {
+          "kind": "code",
+          "caption": "crates/loglib/src/lib.rs（crate 根：声明模块 + re-export 门面）",
+          "lang": "rust",
+          "code": "//! 第 22 天示例：loglib —— 一个可复用的日志解析库 crate。\n//!\n//! 对照 C++：一个 crate 相当于一个静态/动态库 + 它的公开头文件；\n//! `pub` 标记的项就是头文件里声明的符号，没标记 `pub` 的是 .c 文件\n//! 里的 static 函数——外部看不见，也链接不到。\n\npub mod parse;\npub mod stats;\n\n// 只导出最常用的两个名字，调用方写 `loglib::count_levels` 就够了，\n// 不必记住它住在哪个模块里。这就是 re-export（重新导出）的用途。\npub use parse::parse_level;\npub use stats::count_levels;"
+        },
+        {
+          "kind": "code",
+          "caption": "crates/loglib/src/parse.rs（解析一行日志的级别）",
+          "lang": "rust",
+          "code": "//! 解析一行日志，取出它的级别。\n\n/// 日志级别。对照 C++：就是一个 enum class，只不过 Rust 的变体\n/// 可以携带数据（这里没带，纯粹是标签）。\n#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\npub enum Level {\n    Info,\n    Warn,\n    Error,\n    Debug,\n    Unknown,\n}\n\nimpl Level {\n    /// 从字符串解析级别；不认识的返回 Unknown 而不是报错——\n    /// 日志解析是\"脏数据\"场景，宁可降级也不要让整个程序崩掉。\n    pub fn from_label(s: &str) -> Level {\n        match s {\n            \"INFO\" => Level::Info,\n            \"WARN\" => Level::Warn,\n            \"ERROR\" => Level::Error,\n            \"DEBUG\" => Level::Debug,\n            _ => Level::Unknown,\n        }\n    }\n}\n\n/// 从一行日志里取出级别。日志格式约定为 `[LEVEL] 消息`，\n/// 形如 `[ERROR] disk full`。格式不对返回 None。\npub fn parse_level(line: &str) -> Option<Level> {\n    let line = line.trim();\n    let rest = line.strip_prefix('[')?;\n    let (level, _) = rest.split_once(']')?;\n    Some(Level::from_label(level))\n}\n\n/// 只在本 crate 内部用的小工具：没加 pub，外部 crate 看不见它。\n/// 对照 C++：相当于 .c 文件里的 static 函数。\npub(crate) fn is_blank(line: &str) -> bool {\n    line.trim().is_empty()\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn parses_known_levels() {\n        assert_eq!(parse_level(\"[INFO] ok\"), Some(Level::Info));\n        assert_eq!(parse_level(\"[ERROR] boom\"), Some(Level::Error));\n    }\n\n    #[test]\n    fn malformed_lines_yield_none() {\n        assert_eq!(parse_level(\"no brackets here\"), None);\n        assert_eq!(parse_level(\"[INFO]\"), Some(Level::Info));\n        assert_eq!(parse_level(\"\"), None);\n    }\n\n    #[test]\n    fn unknown_level_is_not_an_error() {\n        assert_eq!(parse_level(\"[TRACE] x\"), Some(Level::Unknown));\n    }\n}"
+        },
+        {
+          "kind": "code",
+          "caption": "crates/loglib/src/stats.rs（按级别统计）",
+          "lang": "rust",
+          "code": "//! 按级别统计日志行数。\n\nuse crate::parse::{is_blank, parse_level, Level};\nuse std::collections::HashMap;\n\n/// 统计一段日志文本里各级别的行数。空行跳过，格式不对的行\n/// 计入 Unknown——这是\"脏数据降级\"策略在统计层的体现。\npub fn count_levels(text: &str) -> HashMap<Level, usize> {\n    let mut counts = HashMap::new();\n    for line in text.lines() {\n        if is_blank(line) {\n            continue;\n        }\n        let level = parse_level(line).unwrap_or(Level::Unknown);\n        *counts.entry(level).or_insert(0) += 1;\n    }\n    counts\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn counts_each_level() {\n        let text = \"[INFO] a\\n[INFO] b\\n[ERROR] c\\n\\n[WARN] d\\njunk line\\n\";\n        let counts = count_levels(text);\n        assert_eq!(counts[&Level::Info], 2);\n        assert_eq!(counts[&Level::Error], 1);\n        assert_eq!(counts[&Level::Warn], 1);\n        assert_eq!(counts[&Level::Unknown], 1);\n    }\n\n    #[test]\n    fn empty_text_gives_empty_map() {\n        assert!(count_levels(\"\").is_empty());\n        assert!(count_levels(\"\\n\\n\").is_empty());\n    }\n}"
+        },
+        {
+          "kind": "code",
+          "caption": "crates/cli/Cargo.toml（path 依赖引用隔壁的 loglib）",
+          "lang": "toml",
+          "code": "[package]\nname = \"logcount\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nloglib = { path = \"../loglib\" }"
+        },
+        {
+          "kind": "code",
+          "caption": "crates/cli/src/main.rs（只负责读文件 + 打印结果）",
+          "lang": "rust",
+          "code": "//! 第 22 天示例：logcount —— workspace 里的一个二进制 crate。\n//!\n//! 它只负责\"读文件 + 打印结果\"，解析与统计的逻辑全在 loglib 里。\n//! 对照 C++：这相当于一个 main.c 只做命令行处理，真正的逻辑\n//! 在 liblog.a 里；改库不需要重新理解 main，改 main 不用碰库。\n\nuse loglib::count_levels;\nuse std::env;\nuse std::fs;\nuse std::process::ExitCode;\n\nfn main() -> ExitCode {\n    let path = match env::args().nth(1) {\n        Some(p) => p,\n        None => {\n            eprintln!(\"用法：logcount <日志文件路径>\");\n            return ExitCode::from(2);\n        }\n    };\n    let text = match fs::read_to_string(&path) {\n        Ok(t) => t,\n        Err(e) => {\n            eprintln!(\"读文件 {path} 失败：{e}\");\n            return ExitCode::from(1);\n        }\n    };\n    let mut counts: Vec<_> = count_levels(&text).into_iter().collect();\n    counts.sort_by_key(|(level, _)| format!(\"{level:?}\"));\n    for (level, n) in counts {\n        println!(\"{level:?}: {n}\");\n    }\n    ExitCode::SUCCESS\n}"
+        },
+        {
+          "kind": "code",
+          "caption": "sample.log（测试用的日志文件，放在 workspace 根目录）",
+          "lang": "text",
+          "code": "[INFO] server started\n[INFO] request ok\n[ERROR] disk full\n[WARN] slow query\n[INFO] request ok\njunk line\n[DEBUG] cache hit"
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "kind": "code",
+          "caption": "依次运行下面四条命令",
+          "lang": "bash",
+          "code": "cargo test --workspace\ncargo run -q -p logcount -- sample.log\ncargo clippy --workspace -- -D warnings\ncargo fmt --check"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test --workspace 应报告 loglib 5 passed（logcount 0 个测试）；cargo run 预期输出（按级别名字母序排列）：Debug: 1、Error: 1、Info: 3、Unknown: 1、Warn: 1。cargo clippy --workspace -- -D warnings 与 cargo fmt --check 应静默通过（无输出即通过）。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 main.rs 里的 loglib::count_levels 改成 loglib::parse::is_blank(\"\")，看编译器报什么错（E0603，function 'is_blank' is private），再改回来；把 lib.rs 里的两行 pub use 删掉，main.rs 的 use loglib::count_levels; 会报什么错（E0432，找不到这个名字——门面撤了，调用方就得写全路径 loglib::stats::count_levels），体会 re-export 的作用；把 Level::from_label 改回 from_str 再跑 clippy，看 clippy 报什么（should_implement_trait：这个名字容易和标准 trait FromStr::from_str 混淆，建议实现 trait 或改名）。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "把项目 1（第 13 天的日志分析 CLI）改造成 workspace：新建 loglib 库 crate，把解析与统计逻辑搬进去（只导出 parse_level 与 count_levels 两个名字），原二进制 crate 改成 path 依赖引用它；cargo test --workspace 通过、clippy 零警告。体会「改库不改 main」的分工。",
+            "给 loglib 再加一个模块 filter：提供 pub fn by_level(text: &str, level: Level) -> Vec<&str>，只返回指定级别的原始行；并在 lib.rs 里 re-export 它。注意 Vec<&str> 里的借用指向输入 text，想清楚生命周期该怎么写（第 12 天的规则：返回的引用必须活在输入的借用里）。",
+            "写一个 workspace 级别的集成测试：在 crates/cli/tests/ 下新建 cli_runs.rs，用 std::process::Command 跑编译好的 logcount 二进制（提示：env!(\"CARGO_BIN_EXE_logcount\") 能拿到它的路径），断言对 sample.log 的输出里含有 Info: 3。体会「集成测试测的是公开行为，不是内部函数」。",
+            "Rustlings：刷 modules 组；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1、2、3 的测试全部通过且 clippy 零警告；能说清 package / crate / module / workspace 的嵌套关系、pub 三档的区别与 re-export 的用途、path 依赖与 workspace 依赖解决的问题；Rustlings modules 组清完。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸（非必需）：官方免费教材《The Rust Programming Language》第 7 章（packages、crates 与 modules：路径、use、pub、re-export）可作今晚泛读，对照今天的 workspace 例子复核即可，不必逐字精读——今天的资料本身已够完成学习。明天第 23 天（周二）：单元测试、集成测试与文档测试——#[cfg(test)] 的组织方式、测试替身与断言写法。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "package、crate、module、workspace 四个概念各是什么？它们之间是怎样嵌套的？cargo new foo 建出的是哪一个？",
+          "a": "package 是一个 Cargo.toml 描述的发布单元；crate 是一个编译单元（库 crate 是 src/lib.rs，二进制 crate 是 src/main.rs）；module 是 crate 内部组织代码的命名空间树；workspace 是多个 package 的集合，共享 Cargo.lock 与 target/。嵌套关系：workspace 包含 package，package 包含 crate，crate 包含 module。cargo new foo 建出的是一个 package，默认包含一个二进制 crate。"
+        },
+        {
+          "q": "pub、pub(crate)、默认私有三档可见性各是谁能用？is_blank 为什么用 pub(crate) 而不是 pub？",
+          "a": "默认私有：只有当前模块及其子模块能用；pub(crate)：整个 crate 内部能用，外部 crate 看不见；pub：所有人都能用。is_blank 只是库内部各模块共享的小工具，不值得对外承诺成公开 API，所以用 pub(crate)——内部够用，外部看不见，之后随便改也不破坏兼容性。"
+        },
+        {
+          "q": "pub use parse::parse_level; 是什么意思？把它删掉，调用方要怎么改才能继续用 parse_level？re-export 对库的演进有什么好处？",
+          "a": "pub use 是 re-export（重新导出）：把深层模块 parse 里的 parse_level 转发到 crate 根，调用方写 loglib::parse_level 就行。删掉它，调用方必须写全路径 loglib::parse::parse_level。好处：公开 API 的门面稳定，内部模块可以随便重构（挪位置、改名），只要 re-export 不变，调用方一行代码都不用改。"
+        },
+        {
+          "q": "workspace 根目录的 Cargo.toml 为什么没有 [package]？cargo run -p logcount 里的 -p 是什么意思？cargo test --workspace 和只在某个成员目录里跑 cargo test 有什么区别？",
+          "a": "workspace 根不是一个 package，只是一个组织多个 package 的容器，所以没有 [package]、没有 src/。-p logcount 是 --package 的缩写，指定操作 workspace 里的哪一个成员。cargo test --workspace 跑全部成员的测试；只在某个成员目录跑 cargo test 只跑当前成员的测试。"
+        },
+        {
+          "q": "loglib = { path = \"../loglib\" } 这行依赖声明是什么意思？它和从 crates.io 拉一个同名依赖有什么区别？[workspace.dependencies] 解决的是什么问题？",
+          "a": "path = \"../loglib\" 是 path 依赖：这个依赖不去 crates.io 找，直接用隔壁目录的 crate；改 loglib 的代码，logcount 下次构建自动用新版，不用发版、不用改版本号。和 crates.io 依赖的区别：来源是本地路径而不是注册表，版本约束由本地 Cargo.toml 的 version 决定。[workspace.dependencies] 是工作区统一依赖：版本只在根 Cargo.toml 写一处，各成员用 serde.workspace = true 继承，避免多个成员对同一依赖的版本慢慢 drift 出多个版本。"
+        }
+      ],
+      "checklist": [
+        "能说清 package / crate / module / workspace 的嵌套关系，并说清 cargo new 建出的是 package",
+        "验收工程在本机 cargo test --workspace 通过（loglib 5 passed），cargo run 输出与预期一致（Info: 3），clippy 零警告、fmt 通过",
+        "能复现 E0603（私有函数跨 crate 不可见）并说清修法，能说清 re-export 的作用与三档可见性的区别",
+        "能说清 path 依赖与 workspace 依赖各自解决的问题，并用 -p 指定 workspace 成员",
+        "跟练任务完成：项目 1 已改造成 workspace，filter 模块与集成测试通过，Rustlings modules 组清完，卡点清单已更新"
+      ]
     }
   ]
 }
