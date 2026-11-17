@@ -4240,6 +4240,240 @@
         "能说清 path 依赖与 workspace 依赖各自解决的问题，并用 -p 指定 workspace 成员",
         "跟练任务完成：项目 1 已改造成 workspace，filter 模块与集成测试通过，Rustlings modules 组清完，卡点清单已更新"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读「核心讲解」第 1 节，对照 C++ 的 GoogleTest 理解",
+              "label": "三种测试分清楚",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "读第 2 节：#[cfg(test)]、断言三件套、should_panic 与 Result 测试",
+              "label": "单元测试与断言",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "读第 3-4 节：tests/ 目录、公开 API、写进注释的例子",
+              "label": "集成测试与文档测试",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（三类测试 10 个全过），动手改两处看报错",
+              "label": "代码验证",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "做跟练任务与自测题，给项目 1、项目 2 补上测试",
+              "label": "跟练与自测",
+              "minutes": "10 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 测试在 Rust 里住在哪：三种测试"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rust 的测试不是一个外部框架，而是一套分层的内置机制。三种测试一次 cargo test 全跑完，输出分三段报告：先是库的单元测试，再是每个集成测试文件，最后是文档测试。今天的示例实测结果就是这样：单元测试 6 个通过、集成测试 3 个通过、文档测试 1 个通过。"
+        },
+        {
+          "items": [
+            "单元测试：住在源码文件里的 #[cfg(test)] mod tests，测内部细节，包括私有函数。C++ 对照：同一个 .cpp 文件末尾的 #ifdef TEST 测试段。",
+            "集成测试：住在 tests/ 目录下每个 .rs 文件，测公开 API 的行为，像外部用户一样调用。C++ 对照：一个只链接公开头文件的独立测试可执行文件。",
+            "文档测试：住在 /// 注释里的代码块，测文档里的例子是不是真的能跑。C++ 对照：Doxygen 例子——C++ 里只是给人看的，Rust 里会被执行。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "paragraph",
+          "text": "为什么分三层？因为它们回答三个不同的问题：单元测试回答「这个函数内部的逻辑对不对」，集成测试回答「公开 API 拼起来能不能用」，文档测试回答「文档里写给用户的例子是不是真的」。一个函数可能单元测试全过，但公开 API 的组合用法是错的——集成测试就是抓这种错的。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 单元测试：#[cfg(test)] 与断言三件套"
+        },
+        {
+          "kind": "paragraph",
+          "text": "#[cfg(test)] 是条件编译：只有 cargo test 时这个模块才会被编译，cargo build / cargo run 构建的产物里根本没有它——测试代码零成本，不会进发布产物。use super::*; 是关键：测试模块是被测模块的子模块，子模块能看见父模块的私有项，所以单元测试可以直接测私有函数；这也是它和集成测试的根本区别。"
+        },
+        {
+          "items": [
+            "assert!(cond)：条件必须为真；失败时只说断言失败，不告诉你值是多少。",
+            "assert_eq!(left, right)：两边必须相等；失败时打印 left 与 right 各自的值。优先用它，而不是 assert!(a == b)——前者失败时直接告诉你两边各是什么值，定位快得多。",
+            "assert_ne!(left, right)：两边必须不等，失败时同样打印两边的值。",
+            "#[should_panic]：这个测试预期会 panic，panic 了才算通过；expected = \"...\" 还要求 panic 消息包含该子串，只写 should_panic 不写 expected，容易把「错地方的 panic」也放过去。",
+            "返回 Result 的测试：测试函数可以写成 fn xxx() -> Result<(), std::io::Error>，函数体里用 ? 传播错误；返回 Err 即测试失败，写起来比到处 unwrap 更干净。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 集成测试：tests/ 目录与公开 API"
+        },
+        {
+          "kind": "paragraph",
+          "text": "在 crate 根目录下建 tests/，里面的每个 .rs 文件都会被编译成一个独立的测试 crate。集成测试的第一行就决定了它的性质：use textutil::{word_count, ...};——它像外部用户一样 use 你的 crate，只能用 pub 的项，私有函数根本看不见。这正是集成测试的意义：它测的是「公开行为」，不是「内部实现」。第 22 天的 E0603 在这里会再次出现：如果你把 word_count 的 pub 删掉，单元测试照样过（同一 crate 内可见），集成测试立刻报 E0603。"
+        },
+        {
+          "items": [
+            "共享的辅助代码放 tests/common/mod.rs，各测试文件写 mod common; 引用。不要写成 tests/common.rs——tests/ 下的每个 .rs 文件都会被当成独立的测试目标编译。",
+            "测试数据文件放 tests/fixtures/ 这类子目录。测试运行时的工作目录是 package 根目录，所以读 fixture 用相对路径 tests/fixtures/sample.txt 就行。",
+            "#[ignore]：在 #[test] 上再加 #[ignore]，这个测试默认会被跳过（cargo test -- --ignored 才跑它）。适合「跑一次要 10 秒」的慢测试。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 文档测试：写进注释的例子会被编译执行"
+        },
+        {
+          "kind": "paragraph",
+          "text": "/// 文档注释里的代码块不是摆设——cargo test 会把它们抽出来，当作独立的测试编译并运行。注意例子里写的是 textutil::word_count——文档测试被编译成一个独立的小 crate，引用的是你的库 crate，所以要写全路径的 crate 名。写错的例子会让 cargo test 失败：文档与代码再也不会悄悄脱节。"
+        },
+        {
+          "items": [
+            "```ignore：不编译、不运行。适合「需要联网 / 需要特定硬件」的例子。",
+            "```no_run：只编译、不运行。适合「会启动服务器 / 死循环演示」的例子。",
+            "```compile_fail：预期编译失败。适合「演示错误用法」的例子。",
+            "提醒：文档测试每次都是重新编译的，一个大例子会拖慢整个测试套件。文档里的例子保持短小，复杂的演示放到 examples/ 目录下用 cargo run --example 跑。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 跑测试的常用姿势"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test 的参数分两段：cargo test [过滤串] 是 cargo 自己的参数，-- 后面的是传给测试运行器的参数。常用组合如下。"
+        },
+        {
+          "items": [
+            "cargo test：全部跑：单元 + 集成 + 文档测试。",
+            "cargo test word_count：只跑名字里含 word_count 的测试（子串匹配）。",
+            "cargo test --lib / --test textutil_api / --doc：只跑某一类测试。",
+            "cargo test -- --nocapture：不捕获测试里的 println! 输出，直接打印（默认输出被捕获，失败时才显示）。",
+            "cargo test -- --test-threads=1：串行跑测试。",
+            "cargo test -- --list：只列出测试名，不跑。",
+            "cargo test -- --ignored：只跑被 #[ignore] 标记的测试。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "callout",
+          "text": "默认行为要记住两条：测试是并行的，而且执行顺序不确定。测试之间不能共享可变状态——两个测试同时改同一个文件、同一个环境变量，在你的机器上能过，在 CI 上随机失败。共享状态的测试要么用 --test-threads=1 串行，要么各自用独立的临时目录、独立的端口。并行是默认的加速手段，不是 bug；写出依赖顺序的测试才是 bug。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解"
+        },
+        {
+          "items": [
+            "误解一：「测试是写完代码之后才补的附属品。」错。在 Rust 里测试是 crate 的一部分：cargo test 是和 cargo build 同级的命令，#[cfg(test)] 的模块就住在源码文件里。",
+            "误解二：「assert! 和 assert_eq! 没区别，都是断言。」错。assert_eq! 失败时打印两边的值，assert!(a == b) 只说「断言失败」。比较相等永远用 assert_eq!。",
+            "误解三：「集成测试也能测私有函数。」错。tests/ 下的测试是外部 crate，只能 use 公开项。想测内部细节，用 #[cfg(test)] 的单元测试；想测公开行为，用集成测试。",
+            "误解四：「测试默认是按写出顺序跑的。」错。默认并行、顺序不确定。今天的示例里 6 个单元测试每次的打印顺序都可能不同。",
+            "误解五：「文档里的例子只是给人看的。」错。cargo test 会编译并运行它们。写文档例子时要当作测试来写：能跑的才写，跑不了的标 ignore 或 no_run。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "7. 今天不做的事"
+        },
+        {
+          "kind": "paragraph",
+          "text": "基准测试（criterion）：第 24 天（周三）的课题，今天先把「对不对」测好，明天再测「有多快」。模糊测试（cargo-fuzz）与属性测试（proptest）：第 5-6 周之后按需再学。mock 框架：Rust 里多用 trait 加手写测试替身，mockall 这类 crate 按需再引入；前 4 周不碰。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo test（单元测试 6 个、集成测试 3 个、文档测试 1 个，全部通过）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全部通过。照抄就能跑。它是一个文本小工具库 textutil，专门用来练测试：四个公开函数，单元测试测内部细节（含一个 should_panic），集成测试只通过公开 API 测行为，文档测试验证注释里的例子。"
+        },
+        {
+          "caption": "src/lib.rs：四个公开函数 + 单元测试模块",
+          "code": "//! 第 23 天示例：textutil —— 文本小工具库，专门用来练测试。\n//!\n//! 对照 C++：`cargo test` 相当于把 GoogleTest 的\"写测试 + 编译测试\n//! 二进制 + 跑\"三步合成一步；`#[cfg(test)]` 的测试模块只在测试\n//! 构建时编译，不会进发布产物。\n\n/// 统计一段文本里的单词数。单词以空白分隔，空文本返回 0。\n///\n/// # 示例\n///\n/// ```\n/// assert_eq!(textutil::word_count(\"hello rust world\"), 3);\n/// assert_eq!(textutil::word_count(\"\"), 0);\n/// ```\npub fn word_count(text: &str) -> usize {\n    text.split_whitespace().count()\n}\n\n/// 把连续空白压缩成单个空格，并去掉首尾空白。\npub fn normalize_space(text: &str) -> String {\n    text.split_whitespace().collect::<Vec<_>>().join(\" \")\n}\n\n/// 取出第一个单词；空文本会 panic（调用方应先检查再调它）。\npub fn first_word(text: &str) -> &str {\n    text.split_whitespace()\n        .next()\n        .expect(\"empty text has no first word\")\n}\n\n/// 判断一个字符串是不是回文（忽略大小写与非字母数字字符）。\n/// 空字符串按回文算（与 C++ 里常见的\"空串是回文\"约定一致）。\npub fn is_palindrome(text: &str) -> bool {\n    let cleaned: Vec<char> = text\n        .chars()\n        .filter(|c| c.is_alphanumeric())\n        .map(|c| c.to_ascii_lowercase())\n        .collect();\n    cleaned.iter().eq(cleaned.iter().rev())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn counts_words() {\n        assert_eq!(word_count(\"hello rust world\"), 3);\n        assert_eq!(word_count(\"  one   two  \"), 2);\n        assert_eq!(word_count(\"\"), 0);\n    }\n\n    #[test]\n    fn normalizes_whitespace() {\n        assert_eq!(normalize_space(\"  a   b\\tc\\n\"), \"a b c\");\n        assert_eq!(normalize_space(\"\"), \"\");\n    }\n\n    #[test]\n    fn first_word_works() {\n        assert_eq!(first_word(\"  hello world\"), \"hello\");\n    }\n\n    #[test]\n    #[should_panic(expected = \"empty text\")]\n    fn first_word_panics_message() {\n        first_word(\"   \");\n    }\n\n    #[test]\n    fn palindrome_examples() {\n        assert!(is_palindrome(\"A man, a plan, a canal: Panama\"));\n        assert!(is_palindrome(\"racecar\"));\n        assert!(!is_palindrome(\"hello\"));\n        assert!(is_palindrome(\"\"));\n    }\n\n    #[test]\n    fn word_count_handles_unicode() {\n        assert_eq!(word_count(\"你好 世界\"), 2);\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "tests/textutil_api.rs：集成测试，只通过公开 API 测",
+          "code": "//! 集成测试：只通过公开 API 测 textutil，就像外部用户一样。\n//! 对照 C++：这相当于一个独立的测试可执行文件，只链接公开头文件。\n\nuse textutil::{is_palindrome, normalize_space, word_count};\n\n#[test]\nfn public_api_counts_words() {\n    assert_eq!(word_count(\"one two three\"), 3);\n}\n\n#[test]\nfn public_api_normalizes_and_checks_palindrome() {\n    assert_eq!(normalize_space(\"  a   b  \"), \"a b\");\n    assert!(is_palindrome(\"No 'x' in Nixon\"));\n}\n\n#[test]\nfn fixture_file_word_count() -> Result<(), std::io::Error> {\n    let text = std::fs::read_to_string(\"tests/fixtures/sample.txt\")?;\n    assert!(word_count(&text) >= 4);\n    Ok(())\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "运行方法：tests/fixtures/sample.txt 内容为两行：hello rust world / cargo test runs",
+          "code": "cargo test\ncargo test word_count\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test 预期输出（三段报告，顺序是单元、集成、文档）：单元测试 6 passed，集成测试 3 passed，文档测试 1 passed（src/lib.rs - word_count）。cargo clippy 与 cargo fmt 应静默通过。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 counts_words 里的 assert_eq!(word_count(\"\"), 0) 改成 1，看失败输出长什么样（left: 0 与 right: 1 各打印一行），再改回来；把 lib.rs 里 word_count 的 pub 删掉再跑 cargo test，看单元测试照样过、集成测试与文档测试报什么错（E0603，函数是私有的），体会「集成测试只认公开 API」，再把 pub 加回来；跑 cargo test word_count，看它只跑了名字里含 word_count 的测试（1 个单元测试 + 1 个集成测试），再跑 cargo test -- --list 看全部测试名。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "给项目 1 的日志解析逻辑（第 13 天）加单元测试：在 parse_level 所在的模块里加 #[cfg(test)] mod tests，覆盖 5 个用例（正常级别、空行、格式错误、未知级别、大小写敏感），cargo test 通过。",
+            "给项目 2 的文件哈希器（第 20 天）加一个集成测试：在 tests/ 下建文件，对一个固定小文件算两次哈希，断言两次结果一致（确定性），再把文件改一个字节，断言哈希变了。体会「集成测试测的是公开行为」。",
+            "给 loglib（第 22 天）的 count_levels 加一个文档测试（/// 例子里写一段两行日志的统计），再跑 cargo test --doc 验证例子真的能跑。",
+            "Rustlings：刷 tests 组；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1、2、3 的测试全部通过且 clippy 零警告；能说清三种测试的住处与区别、断言三件套与 should_panic 的用法、cargo test 的过滤与并行控制；Rustlings tests 组清完。"
+        }
+      ],
+      "checklist": [
+        "能说清三种测试的住处、区别与跑法，知道 tests/ 只能用公开 API",
+        "验收工程在本机 cargo test 通过（单元 6 个、集成 3 个、文档 1 个），clippy 零警告、fmt 通过",
+        "能复现 assert_eq! 的 left/right 失败输出，并说清 should_panic 与 Result 测试的用法",
+        "能用 cargo test 过滤测试、用 --nocapture 看输出、用 --test-threads=1 串行",
+        "跟练任务完成：项目 1 与项目 2 的测试已补上，loglib 文档测试通过，Rustlings tests 组清完，卡点清单已更新"
+      ],
+      "dayNumber": 23,
+      "goal": "学会用 cargo test 写单元测试、集成测试与文档测试，让项目 1 和项目 2 的关键逻辑都有测试兜底。",
+      "lessonDate": "2026-11-17",
+      "quiz": [
+        {
+          "a": "单元测试住在源码里的 #[cfg(test)] mod tests，能测私有项；集成测试住在 tests/，每个文件是一个独立测试 crate，只能用公开 API；文档测试住在 /// 注释的代码块里，rustdoc 抽出来编译运行。tests/ 的测试是外部 crate，只能 use 公开项，私有函数不在它的可见范围里。",
+          "q": "三种测试（单元、集成、文档）各住在哪、测什么、怎么跑？tests/ 下的测试为什么测不到私有函数？"
+        },
+        {
+          "a": "#[cfg(test)] 是条件编译：只在测试配置下编译，cargo test 时编入，cargo build / cargo run 时不编。去掉它，测试代码会被编进正常产物，徒增体积与编译时间，且测试辅助代码可能污染公开 API。",
+          "q": "#[cfg(test)] 是什么意思？去掉它会发生什么？"
+        },
+        {
+          "a": "assert! 断言布尔为真；assert_eq! 断言两边相等，失败时打印 left 与 right 的值；assert_ne! 断言两边不等。assert_eq! 失败时直接告诉你两边各是什么值，定位快；assert!(a == b) 只说「断言失败」，还得自己加打印。",
+          "q": "assert!、assert_eq!、assert_ne! 各有什么用？为什么优先用 assert_eq! 而不是 assert!(a == b)？"
+        },
+        {
+          "a": "#[should_panic] 表示这个测试预期会 panic（panic 才算通过）；expected = \"...\" 要求 panic 消息包含该子串。返回 Result 的测试可以用 ? 传播错误，Err 即测试失败，写起来比 unwrap 更干净。",
+          "q": "#[should_panic] 与 expected 是什么意思？测试函数返回 Result<(), E> 有什么好处？"
+        },
+        {
+          "a": "cargo test word_count 按名字子串过滤，只跑名字里含 word_count 的测试；--nocapture 让测试里的 println! 直接打印（默认被捕获，失败时才显示）；--test-threads=1 串行跑测试。默认并行、顺序不确定，共享状态的测试要串行或隔离。",
+          "q": "cargo test word_count、cargo test -- --nocapture、cargo test -- --test-threads=1 各是干什么的？测试默认是并行还是串行？"
+        }
+      ],
+      "summary": "测试不是附属品：#[cfg(test)] 的单元测试、tests/ 的集成测试和写进注释的文档测试，构成了 Rust 的三层测试体系。",
+      "title": "单元测试与集成测试",
+      "weekNumber": 4
     }
   ]
 }
