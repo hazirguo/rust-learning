@@ -4474,6 +4474,248 @@
       "summary": "测试不是附属品：#[cfg(test)] 的单元测试、tests/ 的集成测试和写进注释的文档测试，构成了 Rust 的三层测试体系。",
       "title": "单元测试与集成测试",
       "weekNumber": 4
+    },
+    {
+      "dayNumber": 24,
+      "weekNumber": 4,
+      "title": "基准测试入门：cargo bench 与 criterion",
+      "lessonDate": "2026-11-18",
+      "goal": "学会用 criterion 写可信的基准：读懂中位数与置信区间，会用 baseline 对比一次改动的效果。",
+      "summary": "手写 Instant 计时量一次不可信：系统抖动能让同一段代码跑出 5.35ms 和 11.14ms 两种结果；criterion 用预热加多次采样加中位数给出可信数字，会读置信区间、会用 baseline 对比改动，才算会测性能。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "为什么手写计时不可信",
+              "minutes": "10 分钟",
+              "detail": "读第 1 节，对照 manual_timing 的 5 遍抖动"
+            },
+            {
+              "label": "criterion 的写法",
+              "minutes": "15 分钟",
+              "detail": "读第 2-3 节：cargo bench 入口、bench_function、black_box"
+            },
+            {
+              "label": "读懂报告与 baseline 对比",
+              "minutes": "15 分钟",
+              "detail": "读第 4 节：中位数、置信区间、HTML 报告、改动前后对比"
+            },
+            {
+              "label": "代码验证",
+              "minutes": "10 分钟",
+              "detail": "跑一遍可运行示例（4 个基准 + 手写计时对照组），看真实输出"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "10 分钟",
+              "detail": "做跟练任务与自测题，给项目 2 的哈希器写第一个基准"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. 先量一量手写计时有多不靠谱"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 20 天你可能已经写过类似这样的计时代码：let start = Instant::now(); hash_file(&path); println!(\"耗时：{:?}\", start.elapsed());。它有三个问题，每个都足以让结论翻车。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "系统抖动：你的进程不是独占 CPU 的，调度器可能切走你的线程、后台进程可能抢缓存、CPU 可能正在降频。一次测量量到的是「那一刻的运气」，不是代码的性能。今天示例里的 manual_timing 就是证据——同一段 manual 写法，5 遍分别是 5.42、5.35、5.51、6.90、11.14 毫秒：最后一次比第一次慢了一倍多，代码一字没变。只量一次就下结论，等于只掷一次骰子就断言骰子有问题。",
+            "编译器优化：如果被测函数的返回值没人用，编译器在 release 模式下可以直接把整个调用删掉（死代码消除），你量到的就是「什么都没干」的耗时——快得离谱，而且是假的。计时代码必须用 std::hint::black_box 把输入和输出「藏起来」，让编译器不敢乱动。",
+            "样本太少：一次测量只有一个数字，没有分布、没有中位数、没有「这个数字有多可信」的概念。性能结论需要统计：跑足够多次、去掉预热、看中位数而不是平均值（平均值会被个别离群值拉偏）。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：这和 std::chrono 手写计时的问题一模一样，Google Benchmark 存在的理由也一样——不是因为程序员不会写计时器，而是因为「可信的计时」本身就是个统计问题，需要框架替你处理预热、采样、统计、报告。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. criterion：稳定版 Rust 的基准测试框架"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rust 自带一个基准测试机制：#[bench] 属性 + cargo bench。但它至今仍是 nightly 专属功能（需要 #![feature(test)]），稳定版用不了。所以工程实践里的标准答案是 criterion：一个第三方 crate，稳定版可用，cargo bench 照样是统一入口。加依赖只需要一行：[dev-dependencies] criterion = \"0.5\"。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "criterion 在背后替你做四件事：预热（正式采样前先跑 3 秒，让 CPU 频率、分支预测、缓存进入稳定状态）；多次采样（默认采 100 个样本，每个样本内部还会自动决定跑多少次迭代）；统计分析（输出中位数与 95% 置信区间，检测离群值，还能画分布图）；报告（终端打印一行摘要，同时在 target/criterion/ 下生成 HTML 报告）。"
+        },
+        {
+          "kind": "callout",
+          "text": "注意：benchmark 目标默认用 Rust 自带的 test harness，而 criterion 要用自己的 harness，所以要在 Cargo.toml 里声明 [[bench]] name = \"text_bench\" harness = false。没有这一行，criterion 的 criterion_main! 宏会和内置 harness 冲突，编译直接报错——这是 criterion 新手最常见的第一道坎。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 写法：bench_function 与 black_box"
+        },
+        {
+          "kind": "paragraph",
+          "text": "c.benchmark_group(\"word_count\") 把相关的基准归到一组，同一组的两个写法会并排出现在报告里，方便对比，组用完要调 group.finish()。b.iter(|| ...) 闭包里的代码会被反复执行很多次，criterion 自动决定迭代次数——这是「被测的部分」，准备工作（比如构造输入）要放在 iter 外面，否则你量的就是「准备 + 执行」的总和。black_box(&text) 把输入包起来，告诉编译器「这个值会被用到，但你看不见它是什么」，防止编译器把调用优化掉。返回值同样要防优化：b.iter 的闭包如果返回一个值，criterion 会自动把它包进 black_box；但如果你在闭包里把结果丢进一个变量后不再使用，就要自己包一层。记住口诀：输入输出都进黑盒，量到的才是真耗时。criterion_group! / criterion_main! 前者把若干基准函数注册成一组，后者生成 main 入口，main 由宏生成，你不用自己写。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "跑法就是 cargo bench（默认 release 模式编译基准——这点很重要：debug 模式的优化全关，量出来的数字没有意义，所以 cargo bench 默认就是 --release；反过来也提醒你：不要在 debug 模式下谈性能）。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 读懂报告：中位数、置信区间与 baseline 对比"
+        },
+        {
+          "kind": "paragraph",
+          "text": "今天示例的真实输出（本机实测，你的机器数字会不同，比例关系才是重点）：word_count/split time: [9.6975 µs 9.9558 µs 10.282 µs]；word_count/manual time: [5.4017 µs 5.4535 µs 5.5467 µs]；normalize_space/collect_join time: [17.375 µs 17.521 µs 17.703 µs]；normalize_space/push_str time: [15.872 µs 16.104 µs 16.398 µs]。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "time: [9.6975 µs 9.9558 µs 10.282 µs] 是三个数：95% 置信区间的下界、中位数、上界。读法是：「真实耗时有 95% 的概率落在 9.70µs 到 10.28µs 之间，最可能的值（中位数）是 9.96µs」。看中位数，不要看平均值——中位数不受个别离群样本拖累。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "数单词：手写扫描（5.45µs）比 split_whitespace().count()（9.96µs）快约 45%。为什么？split_whitespace 返回的是一个迭代器，每次 next() 都要做一次状态机推进；而手写循环是单次遍历、无迭代器开销。但注意：快 45% 不等于「应该手写」：9.96µs 对 4KB 文本来说本来就微不足道，第 20 天的哈希器里真正的耗时在磁盘 I/O，不在数单词。基准告诉你「差多少」，值不值得改由场景决定。",
+            "压缩空白：collect::<Vec<_>>().join(\" \")（17.52µs）与直接 push_str（16.10µs）只差约 8%，在置信区间上几乎重叠——这就是「不用改」的信号。中间多一次 Vec 分配，代价很小。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "改动前后对比是基准测试最常用的姿势：cargo bench -- --save-baseline before（改动前存一份基线），改代码后 cargo bench -- --baseline before（改动后与基线对比）。criterion 会直接告诉你「比基线快/慢了百分之几」，以及这个变化在统计上是否显著。没有基线对比的基准，只能回答「现在多快」，回答不了「我的改动有没有效果」——而后者才是日常开发里真正的问题。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 基准测试的五个坑"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "输入太小：被测函数只跑几十纳秒时，计时开销本身就能淹没真实耗时。办法：把输入放大（今天的例子把句子重复 100 遍凑成 4KB），或用 b.iter 让 criterion 自己决定迭代次数。",
+            "一次测多件事：一个 b.iter 闭包里既读文件又算哈希，量出来的是两件事的总和，改了任何一处都不知道是谁变了。一次只测一个函数。",
+            "debug 模式下测性能：cargo bench 默认 release，但如果你手写 Instant 计时却用 cargo run（debug）跑，量到的是未优化代码的耗时，和线上表现完全是两回事。",
+            "测 I/O 当作测算法：读磁盘、走网络的耗时抖动比 CPU 计算大几个数量级，基准测的是环境不是代码。I/O 部分要单独隔离，或者用固定内存数据代替（今天的例子用的就是内存里的固定字符串）。",
+            "只跑一次就下结论：一次 cargo bench 的数字也有噪声。关键结论要跑两遍确认；criterion 的置信区间已经帮你把「这数字有多可信」算出来了，看它，不要只看中位数。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "误解一：「Instant::now() 量一次就能知道函数多快。」错。一次测量没有统计意义：系统抖动能让同一段代码跑出 5.35ms 和 11.14ms 两种结果（今天的 manual_timing 实测）。可信的结论需要预热 + 多次采样 + 中位数，这正是 criterion 替你做的事。",
+            "误解二：「基准越快越好，看到快的写法就该换。」错。基准回答「差多少」，值不值得换由场景决定。split_whitespace 比手写慢 45%，但绝对值只有 10µs/4KB——在哈希器这种 I/O 占大头的程序里，这点差距连噪声都算不上。先 profile 找到热点，再对热点做基准。",
+            "误解三：「black_box 是可有可无的装饰。」错。没有 black_box，编译器可能把「结果没人用」的调用整个删掉，你量到的就是「什么都没干」的耗时。criterion 会自动包住 b.iter 闭包的返回值，但输入必须你自己包。",
+            "误解四：「内置 #[bench] 和 criterion 是一回事，随便用哪个。」错。内置 #[bench] 需要 nightly，稳定版编译不过；criterion 是第三方 crate，稳定版可用。两者入口都是 cargo bench，但写法与报告完全不同。",
+            "误解五：「基准测试能证明我的代码没有性能问题。」错。基准只能证明「在这一组输入、这台机器、这个编译配置下，这个函数跑这么快」。换一组输入、换一台机器、换一个 CPU 频率，结论都可能变。基准是证据，不是证明。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "今天不做的事：参数化基准（bench_with_input，同一函数测多档输入规模）——第 25 天之后按需再学；吞吐量标注（Throughput::Bytes，输出 MB/s）——给项目 2 的哈希器做基准时再引入；iai-callgrind / perf 剖析——第 7-8 周系统编程阶段的工具；模糊测试与属性测试——第 5-6 周之后按需再学。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo test --release（2 个一致性测试通过）、cargo fmt --check、cargo clippy --all-targets -- -D warnings 全部通过；cargo bench 跑出 4 个基准的中位数；cargo run --release --bin manual_timing 跑出 5 遍手写计时的抖动。照抄就能跑。它是一个文本小工具库 benchlab：src/lib.rs 里是两组「同功能、不同写法」的函数，先用单元测试证明它们结果一致（基准只在「结果一样」的前提下才有比较意义），再用 criterion 同场计时；另有一个 manual_timing 二进制做手写计时的对照组。目录结构：benchlab/，Cargo.toml，src/lib.rs，src/bin/manual_timing.rs，benches/text_bench.rs。"
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "caption": "Cargo.toml",
+          "code": "[package]\nname = \"benchlab\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n\n[dev-dependencies]\ncriterion = \"0.5\"\n\n[[bench]]\nname = \"text_bench\"\nharness = false"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "src/lib.rs（两组对照函数 + 一致性测试）",
+          "code": "//! 第 24 天示例：benchlab —— 用 criterion 给两种写法计时。\n//!\n//! 对照 C++：criterion 相当于 Google Benchmark；`cargo bench` 是\n//! 它的统一入口。内置 `#[bench]` 需要 nightly，所以稳定版用 criterion。\n\n/// 用 `split_whitespace` 数单词（第 23 天 textutil 的写法）。\npub fn count_words_split(text: &str) -> usize {\n    text.split_whitespace().count()\n}\n\n/// 手写扫描数单词：逐字符走，遇到\"空白后跟非空白\"时计数加一。\npub fn count_words_manual(text: &str) -> usize {\n    let mut count = 0;\n    let mut in_word = false;\n    for c in text.chars() {\n        if c.is_whitespace() {\n            in_word = false;\n        } else if !in_word {\n            in_word = true;\n            count += 1;\n        }\n    }\n    count\n}\n\n/// 用 `collect::<Vec<_>>().join(\" \")` 压缩空白（第 23 天的写法）。\npub fn normalize_collect(text: &str) -> String {\n    text.split_whitespace().collect::<Vec<_>>().join(\" \")\n}\n\n/// 手写压缩空白：直接往一个 String 里 push，避免中间 Vec。\npub fn normalize_push(text: &str) -> String {\n    let mut out = String::with_capacity(text.len());\n    let mut need_space = false;\n    for word in text.split_whitespace() {\n        if need_space {\n            out.push(' ');\n        }\n        out.push_str(word);\n        need_space = true;\n    }\n    out\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn both_word_counters_agree() {\n        let cases = [\"\", \"hello rust world\", \"  one   two\\tthree\\n\", \"你好 世界\"];\n        for text in cases {\n            assert_eq!(count_words_split(text), count_words_manual(text));\n        }\n    }\n\n    #[test]\n    fn both_normalizers_agree() {\n        let cases = [\"\", \"  a   b\\tc\\n\", \"hello rust\"];\n        for text in cases {\n            assert_eq!(normalize_collect(text), normalize_push(text));\n        }\n    }\n}"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "benches/text_bench.rs（criterion 基准）",
+          "code": "//! criterion 基准：两种数单词写法、两种压缩空白写法，同场对比。\n//! 每次跑都会在终端输出中位数耗时，并在 target/criterion/ 下存 HTML 报告。\n\nuse benchlab::{count_words_manual, count_words_split, normalize_collect, normalize_push};\nuse criterion::{black_box, criterion_group, criterion_main, Criterion};\n\nfn bench_word_count(c: &mut Criterion) {\n    // 一段约 4KB 的固定输入：100 遍重复的句子，避免输入太小导致计时失真。\n    let text = \"hello rust world, benchmarking is how you stop guessing. \".repeat(100);\n\n    let mut group = c.benchmark_group(\"word_count\");\n    group.bench_function(\"split\", |b| b.iter(|| count_words_split(black_box(&text))));\n    group.bench_function(\"manual\", |b| {\n        b.iter(|| count_words_manual(black_box(&text)))\n    });\n    group.finish();\n}\n\nfn bench_normalize(c: &mut Criterion) {\n    let text =\n        \"  hello   rust   world,   benchmarking   is   how   you   stop   guessing. \".repeat(100);\n\n    let mut group = c.benchmark_group(\"normalize_space\");\n    group.bench_function(\"collect_join\", |b| {\n        b.iter(|| normalize_collect(black_box(&text)))\n    });\n    group.bench_function(\"push_str\", |b| b.iter(|| normalize_push(black_box(&text))));\n    group.finish();\n}\n\ncriterion_group!(benches, bench_word_count, bench_normalize);\ncriterion_main!(benches);"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "src/bin/manual_timing.rs（手写计时对照组）",
+          "code": "//! 手写计时对照组：用 `Instant` 自己量，跑 5 遍看数值抖动有多大。\n//! 跑法：`cargo run --release --bin manual_timing`\n\nuse benchlab::{count_words_manual, count_words_split};\nuse std::time::Instant;\n\nfn main() {\n    let text = \"hello rust world, benchmarking is how you stop guessing. \".repeat(100);\n\n    for (name, f) in [\n        (\"split\", count_words_split as fn(&str) -> usize),\n        (\"manual\", count_words_manual as fn(&str) -> usize),\n    ] {\n        print!(\"{name:>7}: \");\n        for _ in 0..5 {\n            let start = Instant::now();\n            for _ in 0..1000 {\n                // 黑盒：防止编译器把\"结果没人用\"的调用整个优化掉。\n                std::hint::black_box(f(&text));\n            }\n            print!(\"{:>6.2} ms  \", start.elapsed().as_secs_f64() * 1000.0);\n        }\n        println!();\n    }\n    println!(\"同一段代码，5 遍结果都不一样——这就是手写计时需要被替代的原因。\");\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "运行方法：cargo test --release；cargo bench；cargo run --release --bin manual_timing；cargo fmt --check；cargo clippy --all-targets -- -D warnings。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test --release 预期输出（2 个一致性测试通过——先证明两种写法结果一致，基准才有比较意义）：running 2 tests，test tests::both_normalizers_agree ... ok，test tests::both_word_counters_agree ... ok，test result: ok. 2 passed。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo bench 预期输出（本机实测中位数；你的机器数字会不同，看比例关系）：word_count/split time: [9.6975 µs 9.9558 µs 10.282 µs]；word_count/manual time: [5.4017 µs 5.4535 µs 5.5467 µs]；normalize_space/collect_join time: [17.375 µs 17.521 µs 17.703 µs]；normalize_space/push_str time: [15.872 µs 16.104 µs 16.398 µs]。读法：time: [下界 中位数 上界] 是 95% 置信区间。手写扫描比 split 版快约 45%（5.45µs 对 9.96µs）；两种压缩空白只差约 8%，置信区间几乎重叠——属于「不用改」的信号。HTML 报告在 target/criterion/ 下，打开 report/index.html 能看到分布图。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo run --release --bin manual_timing 预期输出（注意最后一遍的抖动）：split: 10.07 ms 9.76 ms 9.68 ms 9.74 ms 9.75 ms；manual: 5.42 ms 5.35 ms 5.51 ms 6.90 ms 11.14 ms；同一段代码，5 遍结果都不一样——这就是手写计时需要被替代的原因。manual 的 5 遍里有一遍跳到 11.14ms，比其它遍慢一倍——代码一字没变，这就是系统抖动。cargo fmt --check 与 cargo clippy --all-targets -- -D warnings 应静默通过（无输出即通过）。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 benches/text_bench.rs 里的一个 black_box(&text) 删掉再跑 cargo bench，看数字会不会变得异常地小（编译器把调用优化掉的征兆），再加回来；跑 cargo bench -- --save-baseline before，再把 normalize_push 里的 String::with_capacity 改成 String::new()，跑 cargo bench -- --baseline before，看 criterion 如何报告这次改动的影响，再改回来；打开 target/criterion/word_count/split/report/index.html，看分布图长什么样。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "给项目 2 的文件哈希器（第 20 天）写第一个基准：在 benches/ 下新建基准文件，对同一个 10MB 测试文件（先用脚本生成，别用真实大文件）测一次单线程哈希的耗时，跑 cargo bench 得到中位数。",
+            "跑一次 baseline 对比：把哈希器的读块大小从 8KB 改成 64KB，先 --save-baseline before 再 --baseline before 对比，看改动让哈希快了还是慢了、变化是否显著；把结论记一句进项目 2 的 README。",
+            "给项目 1 的 parse_level（第 13 天）写基准：对比「match 整行」与「先 split 再 match」两种写法的耗时，判断这处优化值不值得做（先想：日志解析的瓶颈在解析还是在读文件？）。",
+            "Rustlings：刷 benchmarking 相关的题目（若该组不存在，刷 iterators 组里与迭代器开销相关的题）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1 的基准能跑出中位数与置信区间；跟练 2 的 baseline 对比有明确结论（快/慢百分之几、是否显著）；能说清 black_box 的作用、置信区间的读法、harness = false 的原因；Rustlings 当日组清完，卡点清单已更新。"
+        },
+        {
+          "kind": "heading",
+          "text": "延伸"
+        },
+        {
+          "kind": "paragraph",
+          "text": "criterion 官方 Book（docs.rs/criterion，免费在线）第 1 章可作今晚泛读，对照今天的 text_bench 例子复核即可；《The Rust Programming Language》没有基准测试章节，不必去翻。明天第 25 天（周四）：依赖与特性管理——features、profile 与 Cargo.lock 的读法。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "为什么用 Instant 量一次就下结论不可信？至少说出两个原因，并说出今天示例里哪个数字证明了这一点。",
+          "a": "原因有三：系统抖动（调度、缓存、降频让同段代码每次耗时不同）、编译器优化（结果没人用的调用可能被整个删掉）、样本太少（一次测量没有分布概念）。证据：manual_timing 里 manual 写法的 5 遍结果是 5.42、5.35、5.51、6.90、11.14ms，最后一遍比第一遍慢一倍多，代码一字没变。"
+        },
+        {
+          "q": "criterion 的 bench_function、b.iter、black_box 各是干什么的？black_box 不加会发生什么？",
+          "a": "bench_function 注册一个基准；b.iter 的闭包是被反复执行的部分，criterion 自动决定迭代次数；black_box 把值藏起来不让编译器优化掉（输入要包，返回值 criterion 会自动包）。不加 black_box，编译器可能把调用整个优化掉，量到的是「什么都没干」的假耗时。"
+        },
+        {
+          "q": "time: [9.6975 µs 9.9558 µs 10.282 µs] 这三个数分别是什么？为什么看中位数而不是平均值？",
+          "a": "三个数是 95% 置信区间的下界、中位数、上界：真实耗时有 95% 概率落在这个区间里。看中位数是因为它不受个别离群样本拖累，平均值会被离群值拉偏。"
+        },
+        {
+          "q": "[[bench]] 里的 harness = false 是什么意思？不写它会发生什么？cargo bench 默认用 debug 还是 release 模式编译？",
+          "a": "harness = false 是告诉 cargo「不要用内置 test harness 跑这个基准，criterion 自己接管 main」；不写它，criterion 的 criterion_main! 会和内置 harness 冲突，编译报错。cargo bench 默认用 release 模式编译基准。"
+        },
+        {
+          "q": "--save-baseline before 与 --baseline before 各是干什么的？为什么说「没有基线对比的基准回答不了改动有没有效果」？",
+          "a": "--save-baseline before 把当前结果存为名叫 before 的基线；--baseline before 让这次跑的结果与基线对比，报告快/慢百分之几及是否显著。没有基线只能回答「现在多快」，回答不了「这次改动让它变快还是变慢」，而后者才是日常开发真正的问题。"
+        }
+      ],
+      "checklist": [
+        "能说清手写 Instant 计时不可信的三个原因，并指出 manual_timing 里 11.14ms 那一遍的含义",
+        "验收工程在本机跑通：cargo test --release 2 个一致性测试通过，cargo bench 跑出 4 个基准的中位数与置信区间，clippy 零警告、fmt 通过",
+        "能解释 black_box、harness = false、b.iter 的作用，并复现删掉 black_box 后数字异常变小的现象",
+        "能读懂 time: [下界 中位数 上界]，并用 --save-baseline / --baseline 完成一次改动前后对比",
+        "跟练任务完成：项目 2 哈希器基准已跑出中位数，块大小改动的对比结论已记进 README，Rustlings 当日组清完，卡点清单已更新"
+      ]
     }
   ]
 }
