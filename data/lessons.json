@@ -4716,6 +4716,284 @@
         "能读懂 time: [下界 中位数 上界]，并用 --save-baseline / --baseline 完成一次改动前后对比",
         "跟练任务完成：项目 2 哈希器基准已跑出中位数，块大小改动的对比结论已记进 README，Rustlings 当日组清完，卡点清单已更新"
       ]
+    },
+    {
+      "dayNumber": 25,
+      "weekNumber": 4,
+      "title": "依赖与特性管理：features、profile 与 Cargo.lock",
+      "lessonDate": "2026-11-19",
+      "goal": "读懂版本号语义与 Cargo.lock，会用 features 做可选功能开关，并调好 dev 与 release 两个 profile。",
+      "summary": "Cargo.toml 写的是版本要求、Cargo.lock 记的是精确快照；features 是只能加不能减的并集开关；同一份代码在 dev 下溢出 panic、在 release 下静默回绕，差别只在 profile。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "版本号语义与 Cargo.lock",
+              "minutes": "15 分钟",
+              "detail": "读核心讲解第 1-2 节，对照 featlab 的 Cargo.lock 看 itoa 被锁在哪个版本"
+            },
+            {
+              "label": "features：可选功能开关",
+              "minutes": "15 分钟",
+              "detail": "读第 3 节，跑 cargo run 与 --no-default-features 对比输出与依赖树"
+            },
+            {
+              "label": "profile：dev 与 release 的差别",
+              "minutes": "15 分钟",
+              "detail": "读第 4 节，跑 cargo run --release 看溢出从“被捕获”变成“静默回绕”"
+            },
+            {
+              "label": "代码验证与动手实验",
+              "minutes": "5 分钟",
+              "detail": "跑一遍可运行示例的全部命令，看真实输出"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "10 分钟",
+              "detail": "做跟练任务与自测题，给项目 1 加第一个可选特性"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 版本号怎么写：serde = \"1\" 到底允许装什么"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Cargo.toml 里写依赖版本时，最常见也最容易误解的是 caret（^，默认可省略）语义。serde = \"1\" 不是“装 1.0.0”，而是“装大于等于 1.0.0、小于 2.0.0 的最新版”。写得越具体，范围越小。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "\"1\" → >=1.0.0, <2.0.0",
+            "\"1.2\" → >=1.2.0, <2.0.0",
+            "\"1.2.3\" → >=1.2.3, <2.0.0",
+            "\"=1.0.19\" → 只有 1.0.19 这一个版本（精确锁定）",
+            "\"~1.2.3\" → >=1.2.3, <1.3.0（只允许补丁级变化）",
+            "\">=1.2, <1.5\" → 直接写区间"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "注意一个坑：0.x 版本的 caret 更严格。itoa = \"0.3\" 允许的范围是 >=0.3.0, <0.4.0——因为按语义化版本，0.x 的 minor 变化就可能是不兼容的。所以一个库从 0.x 升到 1.0 时，依赖它的项目要手动改版本号，cargo 不会自动跨过去。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：C++ 没有统一的包管理器与版本语义，vcpkg、Conan、系统包管理器各有一套约定，同一个库在不同项目里可能悄悄装成不同版本。Cargo 把“版本要求”写进 Cargo.toml、把“实际解析结果”写进 Cargo.lock，两层分工是固定的：前者是你对兼容性的声明，后者是某一次构建的精确快照。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. Cargo.lock：解析结果的快照，谁该提交"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo build 第一次解析依赖时，会把每个依赖（含传递依赖）的精确版本、来源与校验和写进 Cargo.lock。此后同一份 lock 文件在任何机器上都会复现出同一棵依赖树——这就是“可复现构建”的来源。今天示例里的片段就是证据："
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "code": "[[package]]\nname = \"itoa\"\nversion = \"1.0.19\"\nsource = \"registry+https://github.com/rust-lang/crates.io-index\"",
+          "caption": "Cargo.lock 片段：itoa = \"1\" 允许装 1.x 任意版本，但 lock 把它钉在了 1.0.19"
+        },
+        {
+          "kind": "paragraph",
+          "text": "想动它有两种办法：cargo update（把所有依赖升到各自允许范围内的最新版并重写 lock），或精确升级某一个：cargo update -p itoa --precise 1.0.18（把 itoa 降回 1.0.18，只动它一个）。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "二进制应用（bin crate，如项目 1、项目 2）必须提交 Cargo.lock：你的程序跑在哪个版本的依赖上，直接决定线上行为，lock 是构建可复现的唯一保障。",
+            "库（lib crate）不提交 Cargo.lock：库会被别人依赖，别人解析时会按你的版本要求重新选版本；你锁死的版本对下游毫无意义，只会让你的 CI 测不到“下游真正会用到的新版本”。cargo new --lib 生成的项目默认就把 Cargo.lock 加进了 .gitignore，照做就行。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "两个配套命令：cargo tree 打印依赖树（今天示例：默认特性下能看到 itoa，--no-default-features 下它就消失——features 真的能把依赖从树里摘掉）；CI 里用 cargo build --locked，lock 与 Cargo.toml 不一致时直接失败，而不是悄悄更新 lock。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. features：给 crate 做“可选功能”开关"
+        },
+        {
+          "kind": "paragraph",
+          "text": "features 是 Cargo 的条件编译开关，解决的是“一个库、多种用法”的问题：serde 的 derive 特性开着才有 #[derive(Serialize)]，不开就只有手写实现；tokio 的 full、rt、macros 各管一摊，不开就不编译、不链接。今天示例的 featlab 把机制浓缩到最小。"
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "code": "[features]\ndefault = [\"fast\"]\nfast = [\"dep:itoa\"]\nverbose = []\n\n[dependencies]\nitoa = { version = \"1\", optional = true }",
+          "caption": "featlab 的 Cargo.toml（节选）：fast 特性控制可选依赖 itoa，verbose 是纯代码开关"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "[features] 表里的每一项是一个开关名。default 是特殊项：不传任何 --features 参数时默认开启的开关集合，这里是 [\"fast\"]。",
+            "fast = [\"dep:itoa\"]：开启 fast 特性的同时启用可选依赖 itoa。dep: 语法（2021 edition 起可用）的意思是“这个名字指的是一个依赖，而不是另一个特性”，写了它，代码里才能用 itoa:: 这个路径。",
+            "optional = true：这个依赖平时不存在，只有某个特性启用它时才会被下载、编译、链接进依赖树。cargo tree --no-default-features 下 itoa 消失，就是这行在起作用。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "代码侧用两种条件编译写法，分工不同：#[cfg(feature = \"fast\")] 是编译期开关，特性没开时这段代码根本不存在于编译产物里，连它引用的 itoa::Buffer 都不会被检查；而 cfg!(feature = \"fast\") 是编译期求值的布尔表达式，两个分支都会被编译，只是没选中的那个分支在优化后被删掉。区别很关键：cfg! 的分支里不能写“特性没开就不存在”的代码（比如直接调 itoa::），否则编译失败；#[cfg(...)] 才行。"
+        },
+        {
+          "kind": "callout",
+          "text": "feature 统一化（feature unification）是新手最容易踩的坑：如果你的项目依赖了 A 与 B 两个 crate，而 A 开了 serde 的 derive、B 没开，cargo 会把两者合并——最终 serde 的 derive 是开着的。也就是说，features 在整个依赖图里是“并集”，只能加、不能减。你没法对某个依赖说“只给我不带 derive 的 serde”。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "命令行三件套：cargo run --features verbose（在默认特性之外再开 verbose）、cargo run --no-default-features（关掉全部默认特性，只留你显式点的）、cargo run --all-features（全开，常用于 CI 里“确保每种特性组合都能编译”）。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. profile：同一份代码，dev 与 release 是两种程序"
+        },
+        {
+          "kind": "paragraph",
+          "text": "[profile.dev] 与 [profile.release] 是两套编译配置。cargo run、cargo test 默认用 dev，cargo run --release、cargo bench 默认用 release。关键项："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "opt-level：dev 默认 0（不优化）、release 默认 3（全力优化）。",
+            "debug：是否保留调试信息，dev 默认 true、release 默认 false。",
+            "debug-assertions：debug_assert! 是否执行，dev 默认 true、release 默认 false。",
+            "overflow-checks：整数溢出是 panic 还是回绕，dev 默认 true、release 默认 false。",
+            "lto：链接时优化（\"fat\" 全量，编译慢、运行快），默认都是 false。",
+            "codegen-units：并行编译单元数，默认 16；改成 1 利于优化，不利于编译速度。",
+            "panic：panic 时展开栈还是直接中止（\"abort\" 更小更快，但不能被 catch_unwind 接住）。",
+            "strip：是否剥离符号表（\"debuginfo\" 或 true），减小二进制体积。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "今天示例最值得看的是 overflow-checks：同一个 200u8 + 100u8，dev 下 panic、被 catch_unwind 接住后打印“溢出被捕获”；release 下静默回绕成 44。这是 Rust 与 C++ 最大的不同之一：C++ 里有符号整数溢出是未定义行为（UB），编译器可以假装它不存在；Rust 把它变成“可配置的确定性行为”——开发时显性报错帮你抓 bug，发布时追求速度、按回绕处理。两种行为都是“有定义的”，差别只在 profile 的选择，而不是“碰运气”。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "另外两个 profile 也要知道：[profile.test] 继承 dev（cargo test 的编译配置从它来，平时不用单独写），[profile.bench] 继承 release（cargo bench 从它来）。想给测试单独调配置时，写 [profile.test] opt-level = 2 这样的覆盖项就行。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "一个工程建议：不要在 [profile.release] 里为了“快一点”乱加 lto = \"fat\" 与 codegen-units = 1——它们确实能让程序更快，但代价是编译时间成倍增长。第 24 天的基准测试流程（先 --save-baseline 再对比）就是用来回答“这处改动到底值不值得”的：改 profile 前后各跑一次 cargo bench，有数据再拍板。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 常见误解"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "误解一：“serde = \"1\" 就是装 1.0.0。”错。它是 >=1.0.0, <2.0.0 的范围声明，实际装哪个版本由解析器决定、由 Cargo.lock 记录。今天示例里 itoa = \"1\" 实际装的是 1.0.19。",
+            "误解二：“Cargo.lock 是给所有项目提交的。”错。应用提交、库不提交。库提交 lock 只会让你的 CI 测不到下游真正会用的新版本，百害无一利。",
+            "误解三：“关掉一个特性，就能把依赖树里的东西减掉。”只对了一半。--no-default-features 能关掉你自己的默认特性，但 feature 统一化意味着：只要依赖图里任何一条路径打开了某个特性，它就是打开的。特性是并集、不是交集。",
+            "误解四：“dev 与 release 跑出来的程序行为应该完全一样。”错。debug_assertions 与 overflow-checks 在 dev 开、release 关，debug_assert! 只在 dev 执行、整数溢出在 dev panic、在 release 回绕。写代码时不能依赖“release 下也会 panic”，也不能依赖“dev 下的断言在线上也生效”。",
+            "误解五：“cargo update 是安全的常规操作。”不完全对。它会把所有依赖升到各自允许范围内的最新版——范围内的新版本按语义化版本“应该”兼容，但 0.x 库与个别不守规矩的库可能悄悄引入破坏性变化。升级后要跑测试，关键依赖用 --precise 一个一个升。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "6. 今天不做的事"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "自定义 registry 与 [patch]：替换 crates.io 源或用本地路径覆盖某个依赖的版本，第 7-8 周系统编程阶段按需再学。",
+            "workspace 依赖继承（[workspace.dependencies]）：第 22 天已讲 workspace 结构，今天的项目是单 crate；多成员 workspace 里把公共依赖版本集中写一处，是第 27 天项目 2 扩展时顺手做的事。",
+            "cargo vendor（离线打包依赖）：内网、无网环境部署时才需要，日常开发不必碰。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（默认特性）、cargo run --no-default-features、cargo run --features verbose、cargo run --release 四种组合输出均符合预期；cargo tree 在两种特性组合下正确显示/隐藏 itoa；cargo fmt --check 与 cargo clippy --all-targets -- -D warnings 全部通过。照抄就能跑。它是一个三合一实验台 featlab：一个可选依赖 itoa（由 fast 特性控制）、一个纯代码开关 verbose、一个 dev/release 行为对照（整数溢出 + debug_assertions）。"
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "code": "[package]\nname = \"featlab\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\ndefault = [\"fast\"]\nfast = [\"dep:itoa\"]\nverbose = []\n\n[dependencies]\nitoa = { version = \"1\", optional = true }\n\n[profile.dev]\nopt-level = 0\ndebug-assertions = true\noverflow-checks = true\n\n[profile.release]\nopt-level = 3\nlto = \"fat\"\ncodegen-units = 1",
+          "caption": "featlab 的完整 Cargo.toml"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "//! 第 25 天示例：featlab —— features、profile 与 Cargo.lock 的三合一实验台。\n//!\n//! 跑法：\n//!   cargo run                         （默认特性 fast，dev profile）\n//!   cargo run --no-default-features   （关掉 fast，看 itoa 依赖消失）\n//!   cargo run --features verbose      （再开 verbose）\n//!   cargo run --release               （release profile：溢出静默回绕）\n//!   cargo tree                        （看 itoa 在不在依赖树里）\n\n/// 用 itoa 格式化（fast 特性开时）；否则退回标准库的 to_string。\nfn format_number(n: i64) -> String {\n    #[cfg(feature = \"fast\")]\n    {\n        let mut buf = itoa::Buffer::new();\n        buf.format(n).to_owned()\n    }\n    #[cfg(not(feature = \"fast\"))]\n    {\n        n.to_string()\n    }\n}\n\n/// 200 + 100 在 u8 里会溢出。dev 下 overflow-checks 打开会 panic，\n/// release 下默认关闭，会静默回绕成 44。用 catch_unwind 把两种\n/// 行为都变成可打印的结果，而不是让程序直接崩掉。\nfn add_with_overflow_report(a: u8, b: u8) -> String {\n    std::panic::set_hook(Box::new(|_| {})); // 压住 panic 的默认报错输出\n    match std::panic::catch_unwind(|| a + b) {\n        Ok(v) => format!(\"{a} + {b} = {v}（release 下静默回绕）\"),\n        Err(_) => format!(\"{a} + {b}：溢出被捕获（dev 下 overflow-checks 开启）\"),\n    }\n}\n\nfn main() {\n    println!(\n        \"特性 fast：{}\",\n        if cfg!(feature = \"fast\") { \"开\" } else { \"关\" }\n    );\n    println!(\n        \"特性 verbose：{}\",\n        if cfg!(feature = \"verbose\") {\n            \"开\"\n        } else {\n            \"关\"\n        }\n    );\n    #[cfg(feature = \"verbose\")]\n    println!(\"verbose：正在格式化数字 1234567……\");\n    let n = 1_234_567_i64;\n    let via = if cfg!(feature = \"fast\") {\n        \"itoa\"\n    } else {\n        \"to_string\"\n    };\n    println!(\"格式化 {n} -> {}（{via}）\", format_number(n));\n    println!(\"{}\", add_with_overflow_report(200, 100));\n    debug_assert_eq!(format_number(42), \"42\"); // 只在 dev（含 debug-assertions）下执行\n    println!(\"debug_assertions：{}\", cfg!(debug_assertions));\n}",
+          "caption": "featlab 的 src/main.rs（已验证：四种组合输出符合预期，fmt 与 clippy 全部通过）"
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run\ncargo run --no-default-features\ncargo run --features verbose\ncargo run --release\ncargo tree\ncargo tree --no-default-features\ncargo fmt --check\ncargo clippy --all-targets -- -D warnings",
+          "caption": "运行命令"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "# cargo run（默认特性 fast 开、verbose 关、dev profile）\n特性 fast：开\n特性 verbose：关\n格式化 1234567 -> 1234567（itoa）\n200 + 100：溢出被捕获（dev 下 overflow-checks 开启）\ndebug_assertions：true\n\n# cargo run --no-default-features（fast 关，格式化退回 to_string，结果一样）\n特性 fast：关\n特性 verbose：关\n格式化 1234567 -> 1234567（to_string）\n200 + 100：溢出被捕获（dev 下 overflow-checks 开启）\ndebug_assertions：true\n\n# cargo run --features verbose（多一行 verbose 的日志）\n特性 fast：开\n特性 verbose：开\nverbose：正在格式化数字 1234567……\n格式化 1234567 -> 1234567（itoa）\n200 + 100：溢出被捕获（dev 下 overflow-checks 开启）\ndebug_assertions：true\n\n# cargo run --release（溢出从“被捕获”变成“静默回绕成 44”，debug_assertions 从 true 变成 false）\n特性 fast：开\n特性 verbose：关\n格式化 1234567 -> 1234567（itoa）\n200 + 100 = 44（release 下静默回绕）\ndebug_assertions：false",
+          "caption": "四种 cargo run 组合的预期输出"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "# cargo tree（默认特性）\nfeatlab v0.1.0 (/tmp/featlab)\n└── itoa v1.0.19\n\n# cargo tree --no-default-features\nfeatlab v0.1.0 (/tmp/featlab)",
+          "caption": "cargo tree 对照：同一份 Cargo.toml，只差一个 --no-default-features，itoa 就从依赖树里消失了"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 [profile.dev] 里的 overflow-checks 改成 false 再跑 cargo run，看 dev 下的溢出是不是也变成静默回绕（44），再改回来；跑 cargo update -p itoa --precise 1.0.18，看 Cargo.lock 里 itoa 的版本从 1.0.19 变成 1.0.18，再用 cargo update -p itoa --precise 1.0.19 恢复；把 [features] 里的 default = [\"fast\"] 删掉再跑 cargo run，看默认行为是不是和 --no-default-features 一样，再加回来。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "给项目 1（第 13 天日志分析 CLI）加第一个可选特性：在 Cargo.toml 里加一个 pretty 特性（默认不开），特性开时用 serde_json::to_string_pretty 输出统计结果、关时用紧凑的 to_string；两种组合都跑一遍，对比输出。",
+            "给项目 2（第 20 天文件哈希器）加 [profile.release]：先只加 lto = \"fat\"，用 cargo build --release 前后各量一次二进制大小（ls -l target/release/），再用第 24 天的基准方法确认哈希速度有没有变化；把“值不值得”的一句结论记进 README。",
+            "用 cargo tree 看项目 1 与项目 2 的依赖树：找出一个传递依赖（比如 clap 拉进来的某个小 crate），说清它是从哪条路径被拉进来的；再跑 cargo tree --no-default-features（如果项目有默认特性）看树少了什么。",
+            "Rustlings：刷与依赖、特性相关的题目（若该组不存在，刷 iterators 组里与“两种写法选哪个”相关的题）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1 的两种特性组合都能编译通过且输出符合预期；跟练 2 的二进制大小变化与基准对比结论已记进 README；能说清 dep: 语法、cfg! 与 #[cfg] 的区别、feature 统一化的含义；Rustlings 当日组清完，卡点清单已更新。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "itoa = \"1\" 允许安装哪些版本？itoa = \"0.3\" 呢？为什么 0.x 的 caret 范围更严格？",
+          "a": "\"1\" 允许 >=1.0.0, <2.0.0 的任意版本；\"0.3\" 只允许 >=0.3.0, <0.4.0。因为按语义化版本，0.x 的 minor 变化就可能是不兼容的，所以 caret 在 0.x 时把上限收紧到下一个 minor。"
+        },
+        {
+          "q": "Cargo.lock 里 itoa 被锁在 1.0.19，这和 Cargo.toml 里写的 \"1\" 是什么关系？库 crate 与二进制应用在提交 lock 文件上有什么区别？",
+          "a": "\"1\" 是版本要求（兼容性声明），1.0.19 是某一次解析的精确结果（快照）。二进制应用必须提交 lock 保证构建可复现；库不提交，因为下游会按版本要求重新解析，锁死的版本对下游没有意义，还会让 CI 测不到下游真正会用的新版本。"
+        },
+        {
+          "q": "#[cfg(feature = \"fast\")] 与 cfg!(feature = \"fast\") 有什么区别？为什么前者的分支里可以直接用 itoa::，后者的分支里不行？",
+          "a": "#[cfg(...)] 是编译期开关，特性没开时代码根本不存在于编译产物里，所以可以直接引用特性才带来的依赖；cfg!(...) 是编译期求值的布尔表达式，两个分支都会被编译，没选中的分支只是优化后被删掉——在它里面直接写 itoa:: 会在特性没开时编译失败。"
+        },
+        {
+          "q": "feature 统一化是什么意思？如果你的项目依赖 A 与 B，A 开了 serde 的 derive、B 没开，最终 derive 是开还是关？为什么？",
+          "a": "最终是开。feature 统一化指整个依赖图里同一 crate 的特性取并集：只要任何一条依赖路径打开了某个特性，整棵树里它就是打开的，特性只能加、不能减。"
+        },
+        {
+          "q": "同一个 200u8 + 100u8，dev 下 panic、release 下回绕成 44，背后的配置项是什么？这和 C++ 的整数溢出未定义行为有什么本质区别？",
+          "a": "配置项是 overflow-checks（dev 默认 true、release 默认 false）。本质区别：C++ 的有符号整数溢出是未定义行为，编译器可以假装它不存在；Rust 把溢出变成“可配置的确定性行为”——dev 显性 panic 帮你抓 bug，release 静默回绕追求速度，两种行为都是有定义的。"
+        }
+      ],
+      "checklist": [
+        "能说清 caret 版本语义（\"1\" 与 \"0.3\" 的范围区别），并指出 featlab 的 lock 里 itoa 被锁在哪个版本",
+        "验收工程在本机跑通：四种 cargo run 组合输出符合预期，cargo tree 在两种特性组合下正确显示/隐藏 itoa，clippy 零警告、fmt 通过",
+        "能解释 dep: 语法、#[cfg] 与 cfg! 的区别、feature 统一化，并复现 --no-default-features 下 itoa 从依赖树消失的现象",
+        "能解释 dev 与 release 下整数溢出行为不同的原因，并说清 debug_assertions 与 overflow-checks 各自的开关位置",
+        "跟练任务完成：项目 1 的 pretty 特性两种组合都跑通过，项目 2 的 release profile 对比结论已记进 README，Rustlings 当日组清完，卡点清单已更新"
+      ]
     }
   ]
 }
