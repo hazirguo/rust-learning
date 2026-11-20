@@ -4994,6 +4994,202 @@
         "能解释 dev 与 release 下整数溢出行为不同的原因，并说清 debug_assertions 与 overflow-checks 各自的开关位置",
         "跟练任务完成：项目 1 的 pretty 特性两种组合都跑通过，项目 2 的 release profile 对比结论已记进 README，Rustlings 当日组清完，卡点清单已更新"
       ]
+    },
+    {
+      "dayNumber": 26,
+      "weekNumber": 4,
+      "title": "文档注释与 cargo doc：给项目写一份能给人看的文档",
+      "lessonDate": "2026-11-20",
+      "goal": "学会写 rustdoc 文档注释与 doctest，用 cargo doc 生成可读的 API 文档，并给项目打开 missing_docs 检查。",
+      "summary": "文档注释不是装饰：/// 里的示例会被 cargo test 真正运行，写错就变红；cargo doc 生成的 HTML 就是别人读你代码的第一入口。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "三种注释与 rustdoc 约定",
+              "minutes": "15 分钟",
+              "detail": "读核心讲解第 1-2 节，对照 doclab 的 parse_size 看每个小节长什么样"
+            },
+            {
+              "label": "doctest：会跑的示例",
+              "minutes": "15 分钟",
+              "detail": "读第 3 节，跑 cargo test 看 3 个 doctest 被执行，改错一个断言看测试变红"
+            },
+            {
+              "label": "cargo doc 生成与阅读",
+              "minutes": "15 分钟",
+              "detail": "读第 4 节，跑 cargo doc --no-deps，打开生成的 HTML 核对隐藏行确实没显示"
+            },
+            {
+              "label": "代码验证与动手实验",
+              "minutes": "5 分钟",
+              "detail": "跑一遍可运行示例的全部命令，看真实输出"
+            },
+            {
+              "label": "跟练与自测",
+              "minutes": "10 分钟",
+              "detail": "做跟练任务与自测题，给项目 1、项目 2 的公开 API 补文档"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "三种注释：//、///、//!，贴的位置决定一切"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Rust 的注释按“贴在哪、给谁看”分三档：// 是普通注释，给读源码的人看，编译器与 rustdoc 都忽略；/// 是文档注释，贴在某个 item（函数、struct、enum、字段……）正上方，描述“这个东西是什么、怎么用”，会被 rustdoc 收集进生成的 HTML 文档，并且里面的代码示例会被当成测试跑；//! 是模块级文档注释，贴在文件或模块内部最开头，描述“这个文件 / 这个模块整体是干什么的”，最常见于 src/lib.rs 的第一行（整个 crate 的文档）。/// 本质上是 #[doc = \"...\"] 属性的语法糖，注释内容就是 Markdown 文本。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：Doxygen 的 /** ... */ 与 /// 看起来很像，但语义差了一大截。Doxygen 注释里的示例代码只是文本，没人编译它，烂了也不知道；Rust 的 /// 里的示例是测试，烂了 CI 就红。另外 C++ 的注释与代码是“两张皮”，注释写错了编译器不管；Rust 里文档注释是语言机制的一部分，#[doc] 属性、missing_docs lint 都在编译器管辖内。"
+        },
+        {
+          "kind": "callout",
+          "text": "容易踩的坑：/// 与它描述的 item 之间不能隔空行，也不能隔别的代码。隔了空行，注释就“掉”下来变成孤儿文档，rustdoc 会警告，函数等于没写文档。"
+        },
+        {
+          "kind": "heading",
+          "text": "rustdoc 的约定小节：一份“能看的文档”长什么样"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "首行一句话摘要：文档注释的第一行是摘要，cargo doc 的索引页与列表页只显示这一行。铁律是说清“这个东西是干什么的”，不要复述名字。反面例子：/// parse_size 函数。——等于什么都没说。",
+            "# Examples：最少一个、能跑的例子，展示最常见的调用方式。示例写在 fenced 代码块里，doctest 编译时会自动把当前 crate 作为外部依赖链接进来，所以示例里可以直接用 crate 名调用公开 API。",
+            "# Errors：函数在什么情况下返回 Err（只针对返回 Result 的函数）。# Panics：函数在什么情况下 panic。# Safety：只针对 unsafe fn，调用者必须满足什么前置条件才安全。第 7-8 周写 unsafe 时再用。",
+            "Markdown 与 intra-doc 链接：文档注释是 Markdown。在文档里写 [`RetryPolicy`]（方括号加反引号），rustdoc 会自动渲染成指向该类型的超链接，不用手写 URL。名字必须真实存在，写错了 cargo doc 会报 unresolved link 警告，断链藏不住。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "doctest：文档里的示例会被 cargo test 真正编译运行"
+        },
+        {
+          "kind": "paragraph",
+          "text": "这是 Rust 文档系统与 Doxygen / Javadoc 的本质区别：/// 里 fenced 代码块中的 Rust 代码不是装饰，是测试。cargo test 跑完单元测试后，会单独跑一个 Doc-tests 阶段：把每个文档示例抽出来，包进一个临时 crate 编译、运行。今天示例有 3 个 doctest：crate 级 //! 里的 1 个、parse_size 的 1 个、RetryPolicy 的 1 个。每个 doctest 是独立编译的，一个示例里定义的变量，下一个示例里不存在。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "# 隐藏行：以 # 开头的行会被 doctest 编译、但不会显示在生成的文档里。RetryPolicy 示例里的 # let policy = RetryPolicy::new(100, 800); 就是准备工作，渲染出来的文档里只有 use 与三个 assert_eq!，读者看到的示例干净，编译器看到的示例完整。已核对生成的 HTML 里搜不到 let policy。注意：隐藏行只认行首恰好是 # 加一个空格。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "```ignore：不编译、不运行。用于需要联网、真实硬件或故意展示错误写法的示意代码。慎用：ignore 的示例烂了没人知道。",
+            "```no_run：编译、但不运行。用于编译通过、运行起来没完没了或有副作用的例子，比如启动一个服务器的 fn main。",
+            "```should_panic：编译并运行，且预期它 panic——panic 了算通过，不 panic 反而失败。适合展示“这样调用会 panic”的例子。",
+            "```compile_fail：预期编译失败。适合展示“这段代码通不过借用检查”的反面例子——第 1 周整理的借用错误笔记，用这个标记写进文档就是现成的教学材料。",
+            "```text（或其他非 Rust 语言）：纯文本展示，不编译。适合贴命令行输出、配置文件片段。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "doctest 测的是“文档承诺的行为”——用户照着文档抄的第一行代码能不能跑；单元测试测的是内部逻辑。文档示例与实现脱节（改了函数签名忘了改文档）是所有语言里最常见的文档腐烂；Rust 把这件事变成测试失败，腐烂就藏不住了。"
+        },
+        {
+          "kind": "heading",
+          "text": "cargo doc：生成、阅读与“强制写文档”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "生成文档只需要一条命令：cargo doc --no-deps。--no-deps 的意思是“只生成我自己 crate 的文档，不生成全部依赖的”——不加它，cargo 会把所有依赖的文档也生成一遍，又慢又没必要。生成结果在 target/doc/<crate名>/index.html，用浏览器打开就是一份带搜索框、带类型索引的标准文档站，样式与 docs.rs 完全一致。cargo doc --open 会在生成后直接用默认浏览器打开。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "--document-private-items：默认只给公开（pub）的 item 生成文档；加这个选项后私有函数、内部模块也会出现在文档里。读 Firecracker 源码时想快速摸清一个模块的内部结构，这个选项很有用；但它生成的文档不要发布——内部实现细节不是 API 承诺。",
+            "#![warn(missing_docs)]：写在 src/lib.rs 最开头（crate 级属性，注意是 #!）。打开后，任何公开 item 缺少文档注释都会在编译时报 warning；改成 #![deny(missing_docs)] 则直接报错、编译失败。标准库与绝大多数严肃的库 crate 都开了它——这是“文档不是可选项”的工程化表达。",
+            "#[doc(hidden)]：贴在某个公开 item 上，意思是“它还得是公开的（为了向后兼容或内部使用），但别出现在文档里”。读源码时看到它，说明这个 API 是“公开但不推荐用”的信号。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "常见误解"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "“文档注释就是写给人看的普通注释，换个写法而已。”错。/// 是 #[doc] 属性，是语言机制：内容进 rustdoc、示例进测试、缺失可被 lint 发现。// 只是文本。",
+            "“文档第一行随便写，后面详细写就行了。”错。第一行是摘要，会出现在索引页与列表页，是别人决定“要不要点进来”的唯一依据。",
+            "“doctest 里的代码和单元测试重复，写一遍就够了。”错。两者测的东西不同：单元测试测内部逻辑，doctest 测“文档承诺的公开行为”。",
+            "“# 隐藏行是作弊，示例应该全部展示。”错。隐藏行是 rustdoc 的正式机制，判断标准是：隐藏的行是不是“读者照抄示例时必须自己写的那行”。",
+            "“cargo doc 生成的文档就是给 docs.rs 准备的，本地项目用不上。”错。cargo doc --no-deps --document-private-items 生成一份带搜索的内部文档，是读自己代码、读依赖源码最快的办法；第 9 周读 rust-vmm 时，这就是你的第一步。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo test（3 个 doctest 全部通过）、cargo doc --no-deps（生成 target/doc/doclab/index.html）、cargo fmt --check 与 cargo clippy --all-targets -- -D warnings 全部通过；并已核对生成的 HTML 里 RetryPolicy 示例不含隐藏行 let policy、而 parse_size 示例完整显示。照抄就能跑。它是一个 lib crate doclab：一个带完整文档注释的大小解析函数、一个自定义错误枚举、一个指数退避重试策略——三者都是项目 1、项目 2 与第 5 周反向代理里会直接用到的零件。Cargo.toml 用 cargo new --lib 生成的默认内容即可，无需额外依赖。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "src/lib.rs 完整代码（注意 //! 在文件最开头、/// 紧贴各自的 item）",
+          "code": "//! doclab：演示文档注释（`///` / `//!`）与 rustdoc 的微型库。\n//!\n//! 本文件演示三件事：\n//! 1. 文档注释怎么写才算\"一份能看的文档\"；\n//! 2. `# Examples` 里的代码示例会被 `cargo test` 真正编译运行（doctest）；\n//! 3. intra-doc 链接（见 [`RetryPolicy`]）与 `cargo doc` 的生成结果。\n//!\n//! 快速试用：\n//! ```\n//! let bytes = doclab::parse_size(\"1K\").unwrap();\n//! assert_eq!(bytes, 1024);\n//! ```\n\nuse std::fmt;\n\n/// 解析人类可读的大小字符串，如 `\"512\"`、`\"1K\"`、`\"2M\"`。\n///\n/// 支持的后缀只有 `K`、`M`、`G`（1024 进制），不区分大小写；\n/// 不带后缀时按字节数理解。字符串两端允许空白。\n///\n/// # Examples\n///\n/// ```\n/// assert_eq!(doclab::parse_size(\"512\").unwrap(), 512);\n/// assert_eq!(doclab::parse_size(\"1K\").unwrap(), 1024);\n/// assert_eq!(doclab::parse_size(\"2m\").unwrap(), 2 * 1024 * 1024);\n/// ```\n///\n/// # Errors\n///\n/// 字符串为空、数字部分解析失败、或后缀不在 `K` / `M` / `G` 中时，\n/// 返回 [`ParseSizeError`]。\npub fn parse_size(s: &str) -> Result<u64, ParseSizeError> {\n    let s = s.trim();\n    if s.is_empty() {\n        return Err(ParseSizeError::Empty);\n    }\n    let (num_part, mult) = match s.chars().last() {\n        Some(c) if c.is_ascii_alphabetic() => {\n            let m = match c.to_ascii_uppercase() {\n                'K' => 1024_u64,\n                'M' => 1024_u64 * 1024,\n                'G' => 1024_u64 * 1024 * 1024,\n                _ => return Err(ParseSizeError::BadSuffix(c)),\n            };\n            (&s[..s.len() - 1], m)\n        }\n        _ => (s, 1),\n    };\n    let n: u64 = num_part\n        .trim()\n        .parse()\n        .map_err(|_| ParseSizeError::BadNumber(num_part.to_owned()))?;\n    n.checked_mul(mult).ok_or(ParseSizeError::Overflow)\n}\n\n/// `parse_size` 失败时的错误类型。\n///\n/// 用独立的错误枚举而不是 `String`，调用方才能用 `match` 区分\n/// \"空串\"\"数字错\"\"后缀错\"三种情况——第 10 天讲过的原则：\n/// 库返回结构化错误，应用才用 `anyhow` 兜底。\n#[derive(Debug, PartialEq, Eq)]\npub enum ParseSizeError {\n    /// 输入是空串（或只有空白）。\n    Empty,\n    /// 数字部分解析失败，携带原始数字文本。\n    BadNumber(String),\n    /// 后缀不在 `K` / `M` / `G` 中，携带原始后缀字符。\n    BadSuffix(char),\n    /// 数值乘上倍数后超出 `u64`。\n    Overflow,\n}\n\nimpl fmt::Display for ParseSizeError {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        match self {\n            ParseSizeError::Empty => write!(f, \"大小字符串为空\"),\n            ParseSizeError::BadNumber(s) => write!(f, \"数字部分无法解析：{s}\"),\n            ParseSizeError::BadSuffix(c) => write!(f, \"不支持的大小后缀：{c}\"),\n            ParseSizeError::Overflow => write!(f, \"大小超出 u64 范围\"),\n        }\n    }\n}\n\nimpl std::error::Error for ParseSizeError {}\n\n/// 指数退避的重试策略：失败后第 n 次重试前等待多久。\n///\n/// 延迟按 `base_ms * 2^n` 增长，但不超过 `max_ms`。\n/// 典型用法是配合 [`parse_size`] 之类的解析结果做\"读配置→重试拉取\"的\n/// 循环——第 5 周写反向代理时，这个结构会直接用上。\n///\n/// # Examples\n///\n/// ```\n/// use doclab::RetryPolicy;\n///\n/// # let policy = RetryPolicy::new(100, 800);\n/// assert_eq!(policy.delay_for(0).as_millis(), 100);\n/// assert_eq!(policy.delay_for(1).as_millis(), 200);\n/// assert_eq!(policy.delay_for(3).as_millis(), 800); // 800 封顶，不再翻倍\n/// ```\npub struct RetryPolicy {\n    base_ms: u64,\n    max_ms: u64,\n}\n\nimpl RetryPolicy {\n    /// 新建一个重试策略。\n    ///\n    /// # Panics\n    ///\n    /// `base_ms` 为 0 或 `max_ms` 小于 `base_ms` 时 panic：\n    /// 零延迟的重试等于忙循环，调用方应在构造时就发现这个错误。\n    pub fn new(base_ms: u64, max_ms: u64) -> Self {\n        assert!(base_ms > 0, \"base_ms 必须大于 0\");\n        assert!(max_ms >= base_ms, \"max_ms 不能小于 base_ms\");\n        Self { base_ms, max_ms }\n    }\n\n    /// 第 `attempt` 次重试（从 0 开始计数）前应等待的时间。\n    pub fn delay_for(&self, attempt: u32) -> std::time::Duration {\n        let shift = attempt.min(10);\n        let ms = self.base_ms.saturating_mul(1 << shift).min(self.max_ms);\n        std::time::Duration::from_millis(ms)\n    }\n}\n"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "caption": "运行方法：cargo new --lib doclab 后，把上面代码写进 src/lib.rs，再依次执行",
+          "code": "cargo test\ncargo doc --no-deps\ncargo fmt --check\ncargo clippy --all-targets -- -D warnings"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test 预期输出（单元测试 0 个、doctest 3 个全部通过）：running 3 tests —— test src/lib.rs - RetryPolicy (line 95) ... ok；test src/lib.rs - parse_size (line 23) ... ok；test src/lib.rs - (line 9) ... ok；test result: ok. 3 passed。cargo doc --no-deps 预期输出：Documenting doclab v0.1.0，Generated /tmp/doclab/target/doc/doclab/index.html。cargo fmt --check 与 cargo clippy 应静默通过。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证三点：把 parse_size 示例里的一个 1024 改成 1025 再跑 cargo test，看 doctest 变红、报错里是否明确指出是 src/lib.rs 第 23 行的示例失败，再改回来；用浏览器打开 target/doc/doclab/index.html，点进 RetryPolicy，核对示例里没有 let policy = ... 这一行、但三个 assert_eq! 都在，再点进 parse_size 核对 # Errors 小节里的 ParseSizeError 是可点击的链接；在 src/lib.rs 最开头加一行 #![warn(missing_docs)]，删掉某一个 /// 后跑 cargo check，看 warning 是否出现，再恢复。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "给项目 1（第 13 天日志分析 CLI）与项目 2（第 20 天文件哈希器）的公开函数补文档：每个公开函数都要有首行摘要与 # Examples，返回 Result 的补 # Errors、可能 panic 的补 # Panics；跑 cargo test 确认新增的 doctest 全部通过。",
+            "在项目 2 的 src/lib.rs（若项目 2 目前是 bin crate，先按第 22 天的方法把核心逻辑抽成 lib）最开头加 #![warn(missing_docs)]，跑 cargo check，把所有 warning 逐个补齐，直到零警告。",
+            "给项目 2 跑 cargo doc --no-deps，打开生成的 HTML：检查每个公开函数的页面是否都有示例、intra-doc 链接是否都能点通；把文档里发现的“摘要没说清用途”的函数重写摘要。",
+            "Rustlings：刷与文档、注释相关的题目（若该组不存在，刷 error_handling 组里与“错误类型怎么设计”相关的题）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。"
+          ],
+          "verification": "跟练 1 的 doctest 全部通过且 cargo test 输出里 Doc-tests 数量与新增示例数一致；跟练 2 打开 missing_docs 后 cargo check 零警告；能说清 /// 与 //! 的贴法区别、# 隐藏行的作用、ignore / no_run / should_panic / compile_fail 各用在什么场景；Rustlings 当日组清完，卡点清单已更新。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "今天不做的事：mdBook 与整站文档（第 11-12 周毕业项目再做）；docs.rs 发布流程与 cargo publish（发布的事，毕业项目上 GitHub 时一并做）。延伸（非必需）：rustdoc 官方书（doc.rust-lang.org/rustdoc，免费在线）第 1 章“如何写文档”可作今晚泛读；《The Rust Programming Language》第 14 章有 cargo doc 与文档注释的入门介绍。明天第 27 天（周六）：项目实操——把项目 2 文件哈希器拆成 workspace（lib + bin），给 lib 部分写满文档并打开 missing_docs，跑通 cargo doc 与全部测试。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "///、//!、// 三种注释分别贴在哪、给谁看？/// 与它描述的函数之间隔了一个空行，会发生什么？",
+          "a": "// 是普通注释，给读源码的人看，编译器与 rustdoc 都忽略；/// 是文档注释，贴在某个 item 正上方，描述该 item、进 rustdoc 文档、示例进 doctest；//! 是模块级文档注释，贴在文件或模块内部最开头，描述整个模块或 crate。/// 与函数之间隔空行，注释会与函数断开、变成孤儿文档，rustdoc 会警告，函数等于没写文档。"
+        },
+        {
+          "q": "为什么说 Rust 的 doctest 是“文档不会腐烂”的机制？它与单元测试测的东西有什么不同？",
+          "a": "因为 /// 里 fenced 代码块的 Rust 示例会被 cargo test 的 Doc-tests 阶段真正编译运行，文档示例与实现脱节（改了签名忘了改文档）会直接导致测试失败，腐烂藏不住。单元测试测内部逻辑（包括私有函数与边界条件），doctest 测“文档承诺的公开行为”——用户照文档抄的第一行代码能不能跑，两者分工不同。"
+        },
+        {
+          "q": "# 隐藏行是干什么的？在 RetryPolicy 的示例里，把 # let policy = ... 这一行删掉（不加 # 前缀也不删除），示例还能通过吗？为什么？",
+          "a": "# 隐藏行会被 doctest 编译、但不显示在生成的文档里，用于“示例需要的准备工作，但准备工作本身不是教学内容”。删掉这一行（连同 # 前缀一起删）示例就编译不过：policy 变量不存在，后面的 assert_eq! 引用了未定义的变量；只有保留 # 前缀的隐藏行才能既编译通过又不在文档里显示。"
+        },
+        {
+          "q": "```ignore、```no_run、```should_panic、```compile_fail 各自让 doctest 变成什么行为？各举一个适用场景。",
+          "a": "ignore：不编译、不运行，适用于需要联网、真实硬件或故意展示错误写法的示意代码；no_run：编译但不运行，适用于编译通过、但运行起来没完没了或有副作用的例子（如启动服务器的 main）；should_panic：编译并运行、且预期 panic，panic 了算通过，适用于展示“这样调用会 panic”的例子；compile_fail：预期编译失败，适用于展示“这段代码通不过借用检查”的反面例子。"
+        },
+        {
+          "q": "cargo doc --no-deps 与不加 --no-deps 有什么区别？#![warn(missing_docs)] 打开后，哪个 item 缺了文档会在什么时候被发现？#[doc(hidden)] 又是干什么的？",
+          "a": "--no-deps 只生成当前 crate 自己的文档，不生成全部依赖的文档（更快、更干净）；不加则连依赖的文档一起生成。missing_docs 打开后，公开 item 缺文档会在编译时（cargo check / cargo build）报 warning（deny 则直接报错）。#[doc(hidden)] 让某个公开 item 不出现在文档里，用于“还得公开（兼容或内部使用）、但不推荐别人用”的 API。"
+        }
+      ],
+      "checklist": [
+        "能说清 //、///、//! 的贴法与用途区别，并指出 /// 与函数之间不能隔空行",
+        "验收工程在本机跑通：cargo test 的 3 个 doctest 全部通过，cargo doc --no-deps 生成 target/doc/doclab/index.html，clippy 零警告、fmt 通过",
+        "能解释 doctest 的运行机制、# 隐藏行的作用，并复现“改错示例断言 → doctest 变红”的现象；能说清 ignore / no_run / should_panic / compile_fail 各用在什么场景",
+        "能用 cargo doc --no-deps 生成并阅读自己项目的文档，并说清 --document-private-items、missing_docs、#[doc(hidden)] 各是干什么的",
+        "跟练任务完成：项目 1、项目 2 的公开 API 已补文档且 doctest 通过，missing_docs 打开后 cargo check 零警告，Rustlings 当日组清完，卡点清单已更新"
+      ]
     }
   ]
 }
