@@ -5190,6 +5190,274 @@
         "能用 cargo doc --no-deps 生成并阅读自己项目的文档，并说清 --document-private-items、missing_docs、#[doc(hidden)] 各是干什么的",
         "跟练任务完成：项目 1、项目 2 的公开 API 已补文档且 doctest 通过，missing_docs 打开后 cargo check 零警告，Rustlings 当日组清完，卡点清单已更新"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读「核心讲解」第 1-2 节，对照第 22 天的 workspace 知识画出三层结构",
+              "label": "为什么拆与 workspace 结构",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "读第 3-4 节，照着「可运行代码示例」的目录结构动手拆",
+              "label": "拆分步骤与 pub API 设计",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "读第 5 节，给 lib 的 4 个公开函数补文档，跑 cargo test 看 5 个 doctest",
+              "label": "文档与 missing_docs",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "跑一遍 run / test / clippy / fmt / doc，两种模式各跑一次",
+              "label": "代码验证与两种运行模式",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "做跟练任务与自测题，把 sha2 接进来跑通",
+              "label": "跟练与自测",
+              "minutes": "10 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. 为什么拆：bin crate 是一条死胡同"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 20 天的项目 2 是单个 bin crate：所有代码都在 src/main.rs 里。能跑，但有个结构性问题：bin crate 不能被别的 crate 引用——cargo 规定，只有 lib crate 才能作为依赖被 use。你想在第 5 周的反向代理里复用 hash_file？想给哈希逻辑写 doctest？想把哈希器发布到 crates.io？都做不到，因为 main.rs 里的函数只对这个二进制自己可见。对照 C++：这相当于把全部逻辑都写进 main.cpp——能编译能跑，但别人想复用你的哈希函数，只能把 main.cpp 复制过去。正确做法是把核心逻辑抽进一个库，再写一个薄薄的 main.cpp 只做“解析参数、调用库、打印结果”。Rust 里对应的就是 lib + bin 分离：hasher-core（lib）装算法与并发，hasher-cli（bin）只做编排。"
+        },
+        {
+          "items": [
+            "拆完之后，第 22、23、26 天讲过的机制全部自动生效：lib 的公开函数能写 doctest、能被 cargo test 单独测、能生成 rustdoc、能被别的成员用 path 依赖引用",
+            "一句话：拆不是为了“好看”，是为了让前三天学的工程化工具都有落点",
+            "第 5 周的反向代理会直接复用这个结构（core lib + bin 入口 + tracing）"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "2. workspace 的结构：虚拟清单 + 两个成员 + 一份锁文件"
+        },
+        {
+          "kind": "paragraph",
+          "text": "拆分后的目录：根 Cargo.toml 是虚拟清单（只有 [workspace]，没有 [package]，自己不是 crate，只是个容器）；crates/hasher-core 是 lib crate；crates/hasher-cli 是 bin crate。整个 workspace 只有一份 Cargo.lock 与一个 target/ 目录——cargo 把所有成员当成一个整体解析依赖、编译一次；两个成员都依赖同一个 crate 时，只编译一次。"
+        },
+        {
+          "caption": "根 Cargo.toml（虚拟清单）",
+          "code": "[workspace]\nmembers = [\"crates/hasher-core\", \"crates/hasher-cli\"]\nresolver = \"2\"",
+          "kind": "code",
+          "lang": "toml"
+        },
+        {
+          "items": [
+            "虚拟清单：根目录跑 cargo test 会测全部成员，cargo build 编译全部成员，cargo doc 生成全部成员的文档；resolver = \"2\" 是新版依赖解析器，2021 edition 的默认行为",
+            "一份 Cargo.lock、一个 target/：这就是第 25 天说的“依赖只解析一次”",
+            "path 依赖：hasher-cli 里写 hasher-core = { path = \"../hasher-core\" }，意思是“这个依赖不在 crates.io 上，就在隔壁目录”；将来发布到 crates.io 时还要补一个 version 字段（第 11-12 周毕业项目发布时再做）",
+            "对照 C++：相当于一个 CMake 工程里用 add_subdirectory 挂两个 target（一个库、一个可执行文件），共享同一个构建目录；区别是 Rust 不需要手写“链接谁”——path 依赖声明了，cargo 自动处理编译顺序与链接"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 拆分步骤：四步搬家法"
+        },
+        {
+          "items": [
+            "建目录与三个 Cargo.toml：按第 2 节的结构建好，根清单写 [workspace]，两个成员各写自己的 [package]，hasher-cli 再加一行 path 依赖",
+            "搬函数：hash_file、make_test_files、hash_single_thread、hash_multi_thread 四个函数与 5 个单元测试从 main.rs 搬进 lib.rs，函数体一字不动；每个函数前面加 pub，再补上文档注释",
+            "瘦 main：main.rs 只留参数解析、计时、打印、清理四件事，调用 hasher_core::{...}；另外新加一个 collect_files（递归扫描真实目录），它留在 bin 里",
+            "跑通五项：根目录下依次跑 cargo test --release、cargo run --release -p hasher-cli、cargo doc --no-deps、cargo fmt --check、cargo clippy --all-targets -- -D warnings，全部通过才算拆完"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "callout",
+          "text": "搬家时唯一要改的“代码”只有两处：lib.rs 开头加 #![warn(missing_docs)]，main.rs 开头加 use hasher_core::{...}。四个函数的函数体一字不动——这是对“拆分是否成功”的最直接检验：逻辑代码零改动，只有组织方式变了。collect_files 放在 bin 里而不是 lib 里，因为“递归读目录”是 CLI 的输入方式，不是哈希器的核心能力。判断一个函数该放 lib 还是 bin 的标准：别的程序会不会想直接调用它？hash_file 会，collect_files 不会。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. pub API 与错误类型：lib 的边界长什么样"
+        },
+        {
+          "caption": "lib 对外暴露的 4 个公开函数",
+          "code": "pub fn hash_file(path: &Path) -> io::Result<u64>\npub fn make_test_files(dir: &Path, n_files: usize, file_bytes: usize) -> io::Result<Vec<PathBuf>>\npub fn hash_single_thread(paths: &[PathBuf]) -> io::Result<Vec<(PathBuf, u64)>>\npub fn hash_multi_thread(paths: &[PathBuf], n_workers: usize) -> io::Result<Vec<(PathBuf, u64)>>",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "它们的共同点：全部返回 io::Result，错误用 ? 一路传播到 main，main 返回 io::Result<()>——第 10 天的规则在这里原样落地：库返回结构化错误，应用才用 ? 兜底。hash_multi_thread 的结果里还包了一层 io::Result（(PathBuf, io::Result<u64>)），因为 worker 内部的错误要先发回主线程、再由主线程统一传播（第 20 天第 1 节）。一个细节：包名 hasher-core 与库名 hasher_core 的对应关系——Cargo.toml 里 name 用连字符 hasher-core，Rust 代码里 use 时写下划线 hasher_core（连字符在 Rust 标识符里不合法，cargo 自动帮你换）。doctest 示例里也要写 hasher_core::hash_file，写错了编译不过。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 文档与 missing_docs：让 lib 的每个公开函数都有文档"
+        },
+        {
+          "items": [
+            "#![warn(missing_docs)] 写在 lib.rs 的最开头（crate 级属性，注意是 #!）。打开后，任何公开 item 缺少文档注释都会在编译时报 warning；改成 #![deny(missing_docs)] 则直接报错、编译失败",
+            "每个公开函数都要有首行摘要、# Examples、# Errors：摘要一句话说清用途；示例必须是能跑的代码——今天 lib 里 4 个函数的示例加 crate 级 //! 里的 1 个示例，正好是 cargo test 输出里的 5 个 doctest",
+            "cargo test 在 workspace 根目录一次跑完三个目标：bin 的 0 个测试、lib 的 5 个单元测试、lib 的 5 个 doctest。想只测某一个成员：cargo test -p hasher-core",
+            "cargo doc --no-deps 在 workspace 下生成两个 crate 的文档：target/doc/hasher_core/index.html 与 target/doc/hasher_cli/index.html，两个文件都要有",
+            "bin 的 main.rs 不需要 missing_docs——main 函数与私有函数不是“公开 API”，没人会从文档里找它们；missing_docs 只管 lib 的 pub item。反过来想：如果 main.rs 里长出了值得写文档的公开函数，说明拆得还不够干净，该把它搬进 lib"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 两种运行模式与加速比小于 1 的现象"
+        },
+        {
+          "kind": "paragraph",
+          "text": "hasher-cli 支持两种模式（用法：hasher-cli [目录] [worker 数]）：不给目录时，生成 64 个 1 MiB 测试文件跑基准对比（第 20 天的模式），跑完清理测试数据；给目录时，递归扫描该目录下的全部文件并逐个哈希，不清理、不生成文件（第 20 天跟练任务 2 的做法，现在成了正式功能）。第二种模式跑小目录时会出现一个“反直觉”的数字：本机实测，扫描一个只有 2 个小文本文件的目录，单线程 16.28µs、多线程（2 worker）273.74µs，加速比 0.06x——多线程反而慢了 16 倍。这不是 bug，是第 20 天第 5 节“文件太小”的判断被真实数据验证了：两个几字节的文件，哈希本身只要几微秒，线程创建、channel 往返、锁竞争的固定开销要几百微秒，固定开销把计算时间淹没了。"
+        },
+        {
+          "kind": "callout",
+          "text": "教训：多线程不是免费午餐，任务粒度决定一切——任务越小，固定开销占比越高，加速比越难看；写网关、沙箱这类并发程序时，先算“单个任务够不够大”，再决定要不要并行。"
+        },
+        {
+          "kind": "heading",
+          "text": "7. 常见误解与报错读法"
+        },
+        {
+          "items": [
+            "误解一：“workspace 里的每个成员都要有 main。”错。只有 bin 成员有 main；lib 成员只有 lib.rs。成员的“类型”由 src/ 下是 main.rs 还是 lib.rs 决定，不是由 workspace 决定。一个 workspace 可以全是 lib（比如 rust-vmm 那种），也可以 lib + 多个 bin",
+            "误解二：“拆完之后 cargo test 只测 lib，bin 的 main 测不到，是拆丢了测试。”错了一半：bin 里确实没有测试（main.rs 里 0 个测试），但这正是 lib + bin 分离的目的——可测试的逻辑都在 lib 里，main 薄到不需要测试。如果 main 里长出了逻辑，说明拆得还不够干净",
+            "误解三：“lib 函数忘了写 pub，bin 里 use 不到是小事。”不是小事：编译直接失败，而且报错位置在 bin 的 use 那行，不在 lib——新手容易在错误的地方找原因",
+            "error[E0603]: function hash_file is private 或 unresolved import hasher_core::hash_file：lib 里的函数没加 pub。修法：函数签名加 pub。注意报错指向的是 bin 里 use 的那一行，病根在 lib",
+            "error: failed to load manifest for workspace member ...：根 Cargo.toml 的 members 数组里的路径与实际目录对不上。修法：核对 members 里的每个路径下都有 Cargo.toml",
+            "warning: missing documentation for a function：missing_docs 的警告，说明某个 pub item 没写文档。修法：补 /// 文档（warn 级别只警告；deny 级别直接编译失败）",
+            "error: There are multiple ... packages in your project 或 could not find hasher-cli：-p 后面的名字写错。修法：cargo run -p 后跟的是 Cargo.toml 里的 package name（hasher-cli），不是目录名也不是二进制文件名",
+            "扫描小目录时加速比小于 1：不是 bug，是任务粒度太小（第 6 节）"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "8. 今天不做的事"
+        },
+        {
+          "items": [
+            "criterion 正式基准测试：第 24 天讲过入门，项目 2 的基准对比用 Instant 手写计时已经够用；毕业项目再接 criterion",
+            "rayon 并行迭代器：第 20 天说过，手动搭 channel 是为了理解流水线；现在结构拆好了，第 5 周写反向代理之前，可以拿 rayon 版做一次对比实验",
+            "把 hasher-core 发布到 crates.io：第 11-12 周毕业项目时再走发布流程（version 字段、README、cargo publish）"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：根目录 cargo test --release（bin 0 个测试、lib 5 个单元测试、5 个 doctest，全部通过）、cargo run --release -p hasher-cli（两种模式都跑过）、cargo doc --no-deps（生成 hasher-core 与 hasher-cli 两份文档）、cargo fmt --check 与 cargo clippy --all-targets -- -D warnings 全部通过。照抄就能跑，零外部依赖，不用联网下载任何 crate。目录结构：hasher-ws/Cargo.toml（虚拟清单）、crates/hasher-core/Cargo.toml（[package] name = \"hasher-core\"）与 src/lib.rs、crates/hasher-cli/Cargo.toml（[package] name = \"hasher-cli\"，依赖 hasher-core = { path = \"../hasher-core\" }）与 src/main.rs。"
+        },
+        {
+          "caption": "crates/hasher-core/src/lib.rs（完整代码；注意开头 #![warn(missing_docs)] 与 //! 的位置，以及 doctest 示例里的 hasher_core:: 写法）",
+          "code": "#![warn(missing_docs)]\n//! hasher-core：项目 2 文件哈希器的核心库。\n//!\n//! 把\"算哈希\"从命令行程序里抽出来，变成一个可以被任何 bin crate\n//! 依赖的库：哈希算法、任务分发、结果聚合都在这里，\n//! `hasher-cli` 只负责解析命令行参数、打印结果与计时。\n//!\n//! 快速试用：\n//! ```\n//! use hasher_core::hash_file;\n//!\n//! let path = std::env::temp_dir()\n//!     .join(format!(\"hasher-core-doctest-{}.txt\", std::process::id()));\n//! std::fs::write(&path, b\"hello\").unwrap();\n//! assert!(hash_file(&path).is_ok());\n//! let _ = std::fs::remove_file(&path);\n//! ```\n\nuse std::collections::hash_map::DefaultHasher;\nuse std::fs;\nuse std::hash::{Hash, Hasher};\nuse std::io::{self, Read};\nuse std::path::{Path, PathBuf};\nuse std::sync::{mpsc, Arc, Mutex};\nuse std::thread;\n\n/// 对单个文件算哈希：按 8 KiB 分块读，边读边喂给 [`DefaultHasher`]。\n///\n/// 分块读而不是 `fs::read` 整文件进内存——大文件也不会把内存撑爆。\n/// 哈希是确定性的：同一文件两次调用返回相同的值，适合做单线程版与\n/// 多线程版的结果比对。注意 [`DefaultHasher`] 是 SipHash，\n/// 不是密码学哈希，不能替代 `sha256sum` 做防篡改校验。\n///\n/// # Examples\n///\n/// ```\n/// use hasher_core::hash_file;\n///\n/// let path = std::env::temp_dir()\n///     .join(format!(\"hasher-core-hash-file-{}.bin\", std::process::id()));\n/// std::fs::write(&path, b\"hello rust\").unwrap();\n/// let h1 = hash_file(&path).unwrap();\n/// let h2 = hash_file(&path).unwrap();\n/// assert_eq!(h1, h2, \"同一文件两次哈希必须相同\");\n/// let _ = std::fs::remove_file(&path);\n/// ```\n///\n/// # Errors\n///\n/// 文件打不开（不存在、无权限）或读取中途出错时返回 [`io::Error`]。\npub fn hash_file(path: &Path) -> io::Result<u64> {\n    let mut file = fs::File::open(path)?;\n    let mut hasher = DefaultHasher::new();\n    let mut buf = [0_u8; 8192];\n    loop {\n        let n = file.read(&mut buf)?;\n        if n == 0 {\n            break;\n        }\n        buf[..n].hash(&mut hasher);\n    }\n    Ok(hasher.finish())\n}\n\n/// 生成测试文件：每个文件 `file_bytes` 字节，内容由文件编号做种子、\n/// 用 xorshift 生成的确定性伪随机字节——每次运行内容相同，哈希可复现。\n///\n/// 目录不存在时会自动创建。返回按编号排序的全部文件路径。\n///\n/// # Examples\n///\n/// ```\n/// use hasher_core::make_test_files;\n///\n/// let dir = std::env::temp_dir()\n///     .join(format!(\"hasher-core-make-files-{}\", std::process::id()));\n/// let paths = make_test_files(&dir, 2, 1024).unwrap();\n/// assert_eq!(paths.len(), 2);\n/// assert!(paths[0].is_file());\n/// std::fs::remove_dir_all(&dir).unwrap();\n/// ```\n///\n/// # Errors\n///\n/// 目录创建失败或任一文件写不进去时返回 [`io::Error`]。\npub fn make_test_files(dir: &Path, n_files: usize, file_bytes: usize) -> io::Result<Vec<PathBuf>> {\n    fs::create_dir_all(dir)?;\n    let mut paths = Vec::with_capacity(n_files);\n    for i in 0..n_files {\n        let path = dir.join(format!(\"file-{i:03}.bin\"));\n        let mut data = Vec::with_capacity(file_bytes);\n        let mut x: u64 = 0x9E37_79B9_7F4A_7C15u64.wrapping_add(i as u64);\n        while data.len() < file_bytes {\n            x ^= x << 13;\n            x ^= x >> 7;\n            x ^= x << 17;\n            data.extend_from_slice(&x.to_le_bytes());\n        }\n        data.truncate(file_bytes);\n        fs::write(&path, &data)?;\n        paths.push(path);\n    }\n    Ok(paths)\n}\n\n/// 单线程版：顺序算每个文件的哈希。\n///\n/// 返回 `(路径，哈希值)` 列表，顺序与输入 `paths` 相同。\n/// 它是多线程版的\"正确答案\"：两个版本的结果按路径排序后必须逐项相等。\n///\n/// # Examples\n///\n/// ```\n/// use hasher_core::{hash_single_thread, make_test_files};\n///\n/// let dir = std::env::temp_dir()\n///     .join(format!(\"hasher-core-single-{}\", std::process::id()));\n/// let paths = make_test_files(&dir, 3, 1024).unwrap();\n/// let out = hash_single_thread(&paths).unwrap();\n/// assert_eq!(out.len(), 3);\n/// std::fs::remove_dir_all(&dir).unwrap();\n/// ```\n///\n/// # Errors\n///\n/// 任一文件算哈希失败时返回该文件的 [`io::Error`]，已算出的结果丢弃。\npub fn hash_single_thread(paths: &[PathBuf]) -> io::Result<Vec<(PathBuf, u64)>> {\n    let mut out = Vec::with_capacity(paths.len());\n    for p in paths {\n        out.push((p.clone(), hash_file(p)?));\n    }\n    Ok(out)\n}\n\n/// 多线程版：任务 channel 分发路径，结果 channel 回传哈希。\n///\n/// 主线程经任务 channel 把文件路径发给 `n_workers` 个 worker，\n/// 每个 worker 读文件、算哈希，再经结果 channel 把结果发回主线程聚合。\n/// mpsc 的 `Receiver` 只有一份、不能 clone，所以用 `Arc<Mutex<Receiver>>`\n/// 让多个 worker 轮流取任务——这是标准库里实现\"多消费者\"的标准写法，\n/// 代价是取任务时要抢一把小锁；真正的多消费者 channel 在 crossbeam 里。\n///\n/// 返回结果的顺序不固定（哪个 worker 先算完、哪个结果先到），\n/// 调用方需要按路径排序后再与单线程版比对。\n///\n/// # Examples\n///\n/// ```\n/// use hasher_core::{hash_multi_thread, hash_single_thread, make_test_files};\n///\n/// let dir = std::env::temp_dir()\n///     .join(format!(\"hasher-core-multi-{}\", std::process::id()));\n/// let paths = make_test_files(&dir, 4, 1024).unwrap();\n/// let mut multi = hash_multi_thread(&paths, 2).unwrap();\n/// let mut single = hash_single_thread(&paths).unwrap();\n/// multi.sort();\n/// single.sort();\n/// assert_eq!(multi, single);\n/// std::fs::remove_dir_all(&dir).unwrap();\n/// ```\n///\n/// # Errors\n///\n/// 任一文件算哈希失败时返回该文件的 [`io::Error`]，\n/// 其余已收到的结果丢弃。\npub fn hash_multi_thread(paths: &[PathBuf], n_workers: usize) -> io::Result<Vec<(PathBuf, u64)>> {\n    let (task_tx, task_rx) = mpsc::channel::<PathBuf>();\n    let (result_tx, result_rx) = mpsc::channel::<(PathBuf, io::Result<u64>)>();\n    let task_rx = Arc::new(Mutex::new(task_rx));\n\n    let mut handles = Vec::with_capacity(n_workers);\n    for _ in 0..n_workers {\n        let task_rx = Arc::clone(&task_rx);\n        let result_tx = result_tx.clone();\n        handles.push(thread::spawn(move || {\n            loop {\n                let task = {\n                    let rx = task_rx.lock().unwrap();\n                    rx.recv()\n                };\n                match task {\n                    Ok(path) => {\n                        let r = hash_file(&path);\n                        // 接收端若已关闭，send 失败也无所谓：直接丢掉，不 panic。\n                        let _ = result_tx.send((path, r));\n                    }\n                    Err(_) => break, // 任务 channel 关闭：没有更多任务，退出。\n                }\n            }\n        }));\n    }\n    drop(result_tx); // 主线程这份 result_tx 也要丢掉，否则结果收不完。\n\n    for p in paths {\n        task_tx.send(p.clone()).unwrap();\n    }\n    drop(task_tx); // 发完任务就关闭 channel：worker 取完任务就退出。\n\n    let mut out = Vec::with_capacity(paths.len());\n    for (path, r) in result_rx {\n        out.push((path, r?));\n    }\n    for h in handles {\n        h.join().unwrap();\n    }\n    Ok(out)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn tmp_dir(name: &str) -> PathBuf {\n        std::env::temp_dir().join(format!(\"hasher-core-test-{name}\"))\n    }\n\n    #[test]\n    fn hash_is_deterministic() {\n        let dir = tmp_dir(\"deterministic\");\n        let _ = fs::remove_dir_all(&dir);\n        let paths = make_test_files(&dir, 3, 4096).unwrap();\n        let h1 = hash_file(&paths[0]).unwrap();\n        let h2 = hash_file(&paths[0]).unwrap();\n        assert_eq!(h1, h2, \"同一文件两次哈希必须相同\");\n        assert_ne!(h1, hash_file(&paths[1]).unwrap(), \"不同文件哈希应不同\");\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn empty_file_hashes_without_error() {\n        let dir = tmp_dir(\"empty\");\n        let _ = fs::remove_dir_all(&dir);\n        fs::create_dir_all(&dir).unwrap();\n        let empty = dir.join(\"empty.bin\");\n        fs::write(&empty, []).unwrap();\n        assert!(hash_file(&empty).is_ok());\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn single_and_multi_thread_agree() {\n        let dir = tmp_dir(\"agree\");\n        let _ = fs::remove_dir_all(&dir);\n        let paths = make_test_files(&dir, 12, 8192).unwrap();\n        let mut single = hash_single_thread(&paths).unwrap();\n        let mut multi = hash_multi_thread(&paths, 4).unwrap();\n        single.sort();\n        multi.sort();\n        assert_eq!(single, multi);\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn more_workers_than_files_still_works() {\n        let dir = tmp_dir(\"many-workers\");\n        let _ = fs::remove_dir_all(&dir);\n        let paths = make_test_files(&dir, 2, 4096).unwrap();\n        let mut out = hash_multi_thread(&paths, 8).unwrap();\n        assert_eq!(out.len(), 2);\n        out.sort();\n        let mut single = hash_single_thread(&paths).unwrap();\n        single.sort();\n        assert_eq!(out, single);\n        fs::remove_dir_all(&dir).unwrap();\n    }\n\n    #[test]\n    fn missing_file_returns_error() {\n        let missing = PathBuf::from(\"/tmp/hasher-core-no-such-file.bin\");\n        assert!(hash_file(&missing).is_err());\n        let paths = vec![missing];\n        assert!(hash_single_thread(&paths).is_err());\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "crates/hasher-cli/src/main.rs（完整代码；只做编排：解析参数、调用 lib、打印计时）",
+          "code": "//! hasher-cli：项目 2 文件哈希器的命令行入口。\n//!\n//! 只做三件\"编排\"的事：解析命令行参数、调用 `hasher-core` 的库函数、\n//! 打印计时与加速比。哈希算法、线程池、channel 流水线都在 lib 里，\n//! 这个 bin 里没有任何业务逻辑——这是 lib + bin 分离的要点。\n\nuse hasher_core::{hash_multi_thread, hash_single_thread, make_test_files};\nuse std::fs;\nuse std::io;\nuse std::path::{Path, PathBuf};\nuse std::thread;\nuse std::time::Instant;\n\n/// 递归收集目录下所有文件的路径（不跟随符号链接，不含目录本身）。\nfn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {\n    for entry in fs::read_dir(dir)? {\n        let path = entry?.path();\n        if path.is_dir() {\n            collect_files(&path, out)?;\n        } else if path.is_file() {\n            out.push(path);\n        }\n    }\n    Ok(())\n}\n\n/// 用法：`hasher-cli [目录] [worker 数]`。\n/// 不给目录时，生成 64 个 1 MiB 测试文件跑基准对比；\n/// 给目录时，递归扫描该目录下的全部文件。\nfn main() -> io::Result<()> {\n    let args: Vec<String> = std::env::args().skip(1).collect();\n    let n_workers = args\n        .get(1)\n        .and_then(|s| s.parse::<usize>().ok())\n        .unwrap_or_else(|| {\n            thread::available_parallelism()\n                .map(|n| n.get())\n                .unwrap_or(4)\n        });\n    println!(\"本机可用并行度：{n_workers} 个线程\");\n\n    // 模式一：扫描真实目录；模式二：生成测试文件跑基准对比。\n    let (paths, generated_dir) = match args.first() {\n        Some(dir) => {\n            let mut files = Vec::new();\n            collect_files(Path::new(dir), &mut files)?;\n            files.sort();\n            println!(\"扫描目录 {dir}，共 {} 个文件\", files.len());\n            (files, None)\n        }\n        None => {\n            let dir = std::env::temp_dir().join(\"hasher-ws-bench\");\n            let n_files = 64;\n            let file_bytes = 1024 * 1024;\n            let paths = make_test_files(&dir, n_files, file_bytes)?;\n            println!(\"已生成 {n_files} 个测试文件，每个 {file_bytes} 字节\");\n            (paths, Some(dir))\n        }\n    };\n    if paths.is_empty() {\n        println!(\"没有文件可哈希，退出。\");\n        return Ok(());\n    }\n\n    let t0 = Instant::now();\n    let single = hash_single_thread(&paths)?;\n    let single_elapsed = t0.elapsed();\n\n    let t0 = Instant::now();\n    let mut multi = hash_multi_thread(&paths, n_workers)?;\n    let multi_elapsed = t0.elapsed();\n\n    // 结果必须一致：按路径排序后逐项比较，顺序不同不算错。\n    let mut single_sorted = single.clone();\n    single_sorted.sort();\n    multi.sort();\n    assert_eq!(single_sorted, multi, \"单线程与多线程的哈希结果必须一致\");\n\n    println!(\"单线程：{single_elapsed:?}，多线程（{n_workers} worker）：{multi_elapsed:?}\");\n    let speedup = single_elapsed.as_secs_f64() / multi_elapsed.as_secs_f64();\n    println!(\"加速比：{speedup:.2}x\");\n    println!(\n        \"示例：{} -> {:#018x}\",\n        single_sorted[0].0.display(),\n        single_sorted[0].1\n    );\n\n    if let Some(dir) = generated_dir {\n        fs::remove_dir_all(&dir)?; // 清理测试数据。\n    }\n    Ok(())\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "caption": "在 workspace 根目录 hasher-ws/ 下依次跑",
+          "code": "cargo test --release\ncargo run --release -p hasher-cli\ncargo run --release -q -p hasher-cli -- /tmp/某个小目录 2\ncargo doc --no-deps\ncargo fmt --check\ncargo clippy --all-targets -- -D warnings",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test --release 预期输出：bin 0 个测试、lib 5 个单元测试（hash_is_deterministic、empty_file_hashes_without_error、single_and_multi_thread_agree、more_workers_than_files_still_works、missing_file_returns_error）、5 个 doctest（crate 级 1 个 + hash_file、hash_single_thread、hash_multi_thread、make_test_files 各 1 个），全部通过。cargo run --release -p hasher-cli 预期输出（耗时与加速比随机器负载波动，本机两次实测分别是 2.00x 与 3.49x；哈希值是确定性的，每次运行相同，且与第 20 天的输出一致）：本机可用并行度：4 个线程；已生成 64 个测试文件，每个 1048576 字节；单线程：33.31ms，多线程（4 worker）：16.66ms；加速比：2.00x；示例：/tmp/hasher-ws-bench/file-000.bin -> 0xeb5828280379e0eb。扫描模式预期输出（2 个小文本文件；加速比小于 1 是正常现象，见第 6 节）：扫描目录 /tmp/hasher-ws-scan，共 2 个文件；单线程：16.284µs，多线程（2 worker）：273.74µs；加速比：0.06x；示例：/tmp/hasher-ws-scan/a.txt -> 0x05b5107a8b28a0a7。cargo doc --no-deps 应生成 target/doc/hasher_core/index.html 与 target/doc/hasher_cli/index.html 两个文件；cargo fmt --check 与 cargo clippy --all-targets -- -D warnings 应静默通过（无输出即通过）。"
+        },
+        {
+          "kind": "heading",
+          "text": "动手验证三点"
+        },
+        {
+          "items": [
+            "把 lib 里 hash_file 的 pub 删掉再跑 cargo build，看 E0603 报错指向 bin 的 use 那行，再把 pub 加回来",
+            "把 lib.rs 开头的 #![warn(missing_docs)] 改成 #![deny(missing_docs)]，删掉一个函数的 /// 文档，跑 cargo check 看编译直接失败，再恢复",
+            "把 make_test_files 的一个 doctest 断言改错，跑 cargo test 看 doctest 变红，再改回来——同时确认根目录一次 cargo test 跑完了三个测试目标（bin 0、lib 5、doctest 5）"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务（30 分钟内完成）"
+        },
+        {
+          "caption": "跟练 2：SHA-256 替换写法（已验证，测试输出与系统 sha256sum 逐字相同）",
+          "code": "use sha2::{Digest, Sha256};\nuse std::fs;\nuse std::io::{self, Read};\nuse std::path::Path;\n\n/// 对单个文件算 SHA-256，返回小写十六进制字符串（与 sha256sum 输出一致）。\npub fn hash_file_sha256(path: &Path) -> io::Result<String> {\n    let mut file = fs::File::open(path)?;\n    let mut hasher = Sha256::new();\n    let mut buf = [0_u8; 8192];\n    loop {\n        let n = file.read(&mut buf)?;\n        if n == 0 {\n            break;\n        }\n        hasher.update(&buf[..n]);\n    }\n    Ok(hasher\n        .finalize()\n        .iter()\n        .map(|b| format!(\"{b:02x}\"))\n        .collect())\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "把你自己的项目 1（第 13 天日志分析 CLI）按同样结构拆成 workspace：log-core（lib：解析与统计）+ log-cli（bin：参数与输出），lib 开 #![warn(missing_docs)]，公开函数补文档，cargo test / cargo doc / cargo clippy 全过",
+            "接入真实 SHA-256：第 20 天说过“第 4 周把 sha2 接进来”，今天兑现。给 hasher-core 加 sha2 依赖（cargo add sha2，本机解析到 0.11.1，需要联网下载），在 lib 里新增上面这份 hash_file_sha256，再把 main 里的示例打印换成 SHA-256，对比 DefaultHasher 与 SHA-256 的耗时差。注意一个坑：hasher.finalize() 返回的 GenericArray 在这个 digest 版本里没有实现 LowerHex，所以 format!(\"{:x}\", ...) 编译不过（E0277），必须逐字节 format!(\"{b:02x}\") 再拼起来——上面这份代码就是这么写的。验证方法：写内容为 hello rust（无换行）的文件，sha256sum 应输出 e8c73ac958a87f17906b092bd99f37038788ee23b271574aad6d5bf1c76cc61c，你的函数返回的字符串必须逐字相同。再想一步：换了返回值类型（u64 → String）后，hash_single_thread / hash_multi_thread 的结果类型也要跟着改——体会“算法只改一处”的边界：如果想让两种哈希共存，返回类型该怎么设计？（提示：第 11 天的 trait：定义一个 Hasher trait 怎么样？留作思考，第 5 周再回来看。）",
+            "workspace 依赖继承练习：把 sha2 提升到 workspace 级依赖——根 Cargo.toml 加 [workspace.dependencies] 一节写 sha2 = \"0.11\"，成员的 Cargo.toml 里改成 sha2.workspace = true，跑 cargo tree -p hasher-core 确认只解析了一份 sha2（本机已验证，输出里只有一份 sha2 0.11.1 及其依赖）",
+            "Rustlings：刷 workspace / modules 相关题目（若该组已清完，刷 threads 组剩余部分）；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单"
+          ],
+          "verification": "跟练 1 的 workspace 拆分完成、测试与文档全过；跟练 2 的 SHA-256 输出与 sha256sum 逐字相同、能说清两种哈希的速度差与适用边界；跟练 3 的 cargo tree 显示只有一份 sha2；能说清虚拟清单、path 依赖、lib / bin 分工、missing_docs 的作用；Rustlings 当日组清完，卡点清单已更新。"
+        },
+        {
+          "kind": "heading",
+          "text": "自测题（答案可展开查看）"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸（非必需）：Cargo 官方书（doc.rust-lang.org/cargo，免费在线）第 13 章“Workspaces”可作今晚泛读，对照今天的 hasher-ws 复核一遍；想深入理解 rustdoc 搜索与 intra-doc 链接的，再看第 26 天的 doclab。明天第 28 天（周日）：第 4 周复盘——工程化与并发自测，整理本周卡点清单，并定第 5 周反向代理项目的结构。"
+        }
+      ],
+      "checklist": [
+        "workspace 拆分在本机跑通：根目录 cargo test 一次跑完 bin 0 个测试、lib 5 个单元测试、5 个 doctest，全部通过",
+        "cargo run -p hasher-cli 两种模式都跑通：生成测试文件模式打印耗时与加速比、哈希值与第 20 天一致；扫描真实目录模式能递归扫出文件",
+        "cargo doc --no-deps 生成 hasher-core 与 hasher-cli 两份文档，cargo fmt --check 与 cargo clippy --all-targets -- -D warnings 全部通过",
+        "能说清虚拟清单、path 依赖、lib / bin 分工、missing_docs 的作用，并复现“删掉 pub → E0603”的报错",
+        "跟练任务完成：项目 1 已拆成 workspace 且文档齐全，SHA-256 输出与 sha256sum 逐字相同，Rustlings 当日组清完，卡点清单已更新"
+      ],
+      "dayNumber": 27,
+      "goal": "把第 20 天的单文件 bin 拆成 workspace（hasher-core lib + hasher-cli bin），给 lib 写满文档并打开 missing_docs，跑通测试、文档与 clippy。",
+      "lessonDate": "2026-11-21",
+      "quiz": [
+        {
+          "a": "cargo 规定只有 lib crate 才能作为依赖被 use，bin crate 的 main.rs 只对自己可见。搬进 lib.rs 的是四个哈希函数（hash_file、make_test_files、hash_single_thread、hash_multi_thread）与 5 个单元测试；留在 main.rs 的是参数解析、计时、打印、清理，以及新加的 collect_files（递归读目录）。判断标准：别的程序会不会想直接调用它——hash_file 会，collect_files 不会（它是 CLI 的输入方式，不是哈希器的核心能力）。",
+          "q": "bin crate 为什么不能被别的 crate 引用？lib + bin 分离之后，哪些东西从 main.rs 搬进了 lib.rs、哪些留在了 main.rs？判断一个函数该放 lib 还是 bin 的标准是什么？"
+        },
+        {
+          "a": "虚拟清单是只有 [workspace]、没有 [package] 的根 Cargo.toml，它自己不是 crate，只是一个容器。整个 workspace 共享一份 Cargo.lock 与一个 target/ 目录，是因为 cargo 把所有成员当成一个整体解析依赖、编译一次（第 25 天“依赖只解析一次”）。path 依赖的意思是“这个依赖不在 crates.io 上，就在隔壁目录”；发布到 crates.io 时还要补 version 字段。",
+          "q": "workspace 的虚拟清单（virtual manifest）是什么？整个 workspace 为什么只有一份 Cargo.lock 与一个 target/ 目录？path 依赖 hasher-core = { path = \"../hasher-core\" } 是什么意思，发布到 crates.io 时还要补什么？"
+        },
+        {
+          "a": "写在 lib.rs 的最开头（crate 级属性，#!）；管 lib 里所有公开 item 的文档是否齐全，缺了就报 warning。bin 的 main.rs 不需要它，因为 main 函数与私有函数不是“公开 API”，没人会从文档里找它们。warn 只报 warning、编译继续；deny 直接报错、编译失败。",
+          "q": "#![warn(missing_docs)] 写在 lib.rs 的什么位置、管什么？为什么 bin 的 main.rs 不需要它？deny 与 warn 的区别是什么？"
+        },
+        {
+          "a": "根目录 cargo test 一次跑完三个目标：bin 的 0 个测试、lib 的 5 个单元测试、lib 的 5 个 doctest；想只测某一个成员用 cargo test -p hasher-core。-p 后面跟的是 Cargo.toml 里的 package name（hasher-cli），不是目录名也不是二进制文件名。cargo doc --no-deps 生成两个 crate 的文档：hasher_core 与 hasher_cli 各一份 index.html。",
+          "q": "在 workspace 根目录跑 cargo test，会测哪些目标？cargo run -p hasher-cli 里的 -p 后面跟的是什么名字？cargo doc --no-deps 在 workspace 下生成几个 crate 的文档？"
+        },
+        {
+          "a": "不是写错。两个几字节的文件，哈希本身只要几微秒，线程创建、channel 往返、锁竞争的固定开销要几百微秒，固定开销把计算时间淹没了——第 20 天第 5 节“文件太小”的判断被真实数据验证。任务粒度越小，固定开销占比越高，加速比越难看；多线程的前提是“单个任务够大”，先算任务粒度，再决定要不要并行。",
+          "q": "扫描一个只有 2 个小文件的目录时，加速比是 0.06x（多线程反而更慢），这说明程序写错了吗？结合第 20 天第 5 节解释原因，并说说“任务粒度”与“固定开销”的关系。"
+        }
+      ],
+      "summary": "bin crate 不能被引用，lib + bin 分离让前三天学的测试、文档、workspace 机制全部落到项目 2 上；还验证了小文件扫描时多线程反而更慢（加速比 0.06x）。",
+      "title": "项目 2 实操（下）：把文件哈希器拆成 workspace 并写满文档",
+      "weekNumber": 4
     }
   ]
 }
