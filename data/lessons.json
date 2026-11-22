@@ -5458,6 +5458,195 @@
       "summary": "bin crate 不能被引用，lib + bin 分离让前三天学的测试、文档、workspace 机制全部落到项目 2 上；还验证了小文件扫描时多线程反而更慢（加速比 0.06x）。",
       "title": "项目 2 实操（下）：把文件哈希器拆成 workspace 并写满文档",
       "weekNumber": 4
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读「核心讲解」第 1 节，对照表自查：盖住右列，看着左列能不能说出右列",
+              "label": "第四周主线速查",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "读第 2 节：package / crate / module / workspace、三类测试、features 与 profile 与 Cargo.lock、doctest 的双重身份",
+              "label": "四个易混概念辨析",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（test / test --features fast / doc / clippy / fmt 五项全过），做跟练与自测题",
+              "label": "代码验证与自测",
+              "minutes": "20 分钟"
+            },
+            {
+              "detail": "跟练任务：清关第 4 周组、复核项目 2 的加速比数据、定第 5 周项目结构、在清单里给第 4 周打勾",
+              "label": "Rustlings 清关与项目复核",
+              "minutes": "15 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 1 周讲的是「谁拥有数据」，第 2 周讲的是「怎么表达不确定性和变化」，第 3 周讲的是「数据要在多方之间共享时，代价由谁来付」，第 4 周讲的是「代码要长成一个项目时，结构、测试、性能、依赖、文档各由谁来管」——六天六个机制，每一个都在回答「这段代码交给别人用时，怎么保证它是对的、够快、能复现、看得懂」。"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 第四周主线速查：六天其实是「把代码写成别人能用的项目」的六块拼图"
+        },
+        {
+          "items": [
+            "第 22 天 · crate、模块与 workspace：package 是发布单位、crate 是编译单位、module 是组织单位、workspace 是协作单位；可见性分 pub / pub(crate) / 私有三档。落点：hasher-ws 的根是虚拟清单，两个成员是 hasher-core（lib）与 hasher-cli（bin）；use hasher_core::hash_file 能成立，全靠 lib 的函数加了 pub。",
+            "第 23 天 · 单元测试与集成测试：三种测试各住各的地方——单元测内部细节、集成测公开 API、文档测例子；一次 cargo test 全跑完，分三段报告。落点：hasher-core 的 5 个单元测试与 5 个 doctest 都在 cargo test 里一次跑完；bin 的 main 里 0 个测试——可测的逻辑全在 lib 里。",
+            "第 24 天 · 基准测试入门：「对不对」与「有多快」是两类问题：#[bench] 是 nightly 专属，稳定版用 criterion；读报告看中位数与置信区间，用 baseline 对比改动前后。落点：项目 2 的加速比（64 个 1 MiB 文件，2.00x / 3.49x）就是手写 Instant 计时量的——它为什么不可信，毕业项目接 criterion 时再重量。",
+            "第 25 天 · features、profile 与 Cargo.lock：features 管「编译进哪些可选功能」，profile 管「怎么编译」，Cargo.lock 管「解析出了哪些 exact 版本」——三者互不替代。落点：hasher-core 的 sha2（0.11.1）经 workspace.dependencies 继承，全 workspace 只解析一份；resolver = \"2\" 写在根清单里。",
+            "第 26 天 · 文档注释与 cargo doc：/// 是 item 的文档、//! 是整个模块或 crate 的文档；写进 /// 的例子会被编译执行；missing_docs 让「没文档」变成编译期问题。落点：lib.rs 开头 #![warn(missing_docs)]，4 个公开函数各有摘要、# Examples、# Errors，cargo doc --no-deps 生成 hasher-core 与 hasher-cli 两份文档。",
+            "第 27 天 · 项目 2 实操（下）：bin crate 不能被引用，所以把逻辑搬进 lib、把编排留在 bin；拆分的检验标准是「逻辑代码零改动，只有组织方式变了」。落点：拆完后根目录一次 cargo test 跑完 bin 0 个测试、lib 5 个单元测试、5 个 doctest；小目录扫描加速比 0.06x，证明「任务粒度决定一切」。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "paragraph",
+          "text": "自查方法：盖住上面每条的后半部分，看着知识点名，能不能说出「一句话核心」和「项目 2 里的落点」。说不出来的那一行，就是今天要补的。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 四个最容易混的概念辨析"
+        },
+        {
+          "kind": "paragraph",
+          "text": "（1）package / crate / module / workspace：四个词各管哪一层。对照 C++：package 大致对应「一个带 CMakeLists.txt 的组件目录」，crate 对应「一个编译目标（库或可执行文件）」，module 对应「C++20 的 module 或 namespace」，workspace 对应「顶层 CMake 工程用 add_subdirectory 挂多个目标」。package 是一个 Cargo.toml 定义的发布单位，可含一个 lib 与多个 bin；crate 是一个编译单位，入口是 src/lib.rs 或 src/main.rs；module 是 crate 内的组织单位，由 mod 声明长出来；workspace 是多个 package 的协作单位，根 Cargo.toml 只有 [workspace]、没有 [package] 时叫虚拟清单，整个 workspace 共享一份 Cargo.lock 与一个 target/ 目录。"
+        },
+        {
+          "kind": "callout",
+          "text": "新手最常犯的错误是把「文件」当成「模块」：以为 src/foo.rs 天生就是一个模块。其实没有 mod foo; 这句声明，foo.rs 只是磁盘上的一个文件，编译器根本不看它。记住：模块树由 mod 声明长出来，文件只是模块住的地方。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "（2）三种测试：各住各的地方，测的东西不一样。单元测试住在源码文件里的 #[cfg(test)] mod tests，测内部细节（含私有函数）；集成测试住在 tests/ 目录，每个 .rs 文件一个独立测试二进制，像外部用户一样只调公开 API；文档测试住在 /// 注释里的代码块，测「文档例子是不是真的能跑」。为什么 bin crate 的 main 测不到？因为集成测试与 doctest 都只认「公开 API」，而 bin 没有公开 API——想测 main 里的逻辑，唯一的办法是把它搬进 lib（第 27 天做的正是这件事）。所以「bin 里 0 个测试」不是拆丢了测试，而是拆分正确的证据。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "（3）features、profile、Cargo.lock：三个「版本与配置」机制各管什么。features 管「编译进哪些可选功能」（条件编译 + 可选依赖），同一份源码、不同 features 编出来是功能不同的程序；profile 管「怎么编译」（opt-level、debug、LTO），功能完全一样，只改性能与体积；Cargo.lock 管「解析出了哪些 exact 版本」——serde = \"1\" 允许装 1.x 的任何版本，lock 文件把「这次实际装了哪个版本」快照下来，保证别人编出来和你一样。库的 Cargo.lock 不提交（版本由使用方最终解析），只有可执行文件与 workspace 根的 lock 文件值得提交。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "（4）doctest 的双重身份：文档即测试，改实现不改例子就会变红。Rust 的文档注释里写例子，对人是「这个函数怎么用」的说明，对机器是会被 cargo test 抽出来编译运行的测试；改了函数行为、忘了改文档例子，测试就变红，文档与实现不会悄悄脱节。C++ 的 Doxygen 例子没有这个保证。doctest 失败时报错行号指向注释里的行，例如 test src/lib.rs - count_words (line 27)——行号在注释里就是例子错了；missing_docs 是「没文档」的编译期防线，doctest 是「文档是错的」的运行期防线，两道防线各管一头。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 第 3-4 周验收自查：Arc<Mutex<T>> 与项目 2 的对比数据"
+        },
+        {
+          "kind": "paragraph",
+          "text": "验收一：能说清 Arc<Mutex<T>> 的适用与误用场景。适用：多线程真的需要「同时看到同一份可变状态」，且没有别的办法——项目 2 里唯一的一处是 Arc<Mutex<Receiver>>，多个 worker 要共享同一个任务 Receiver，而标准库 mpsc 的 Receiver 是单消费者、不能 clone，别无选择只能用锁包起来。误用一：只用来汇总结果——各线程算完 push 进 Arc<Mutex<Vec<...>>>，主线程轮询「收齐了没有」，应该换成一条结果 channel；误用二：只读数据也包 Mutex——写完不再变、各线程只读时 Arc<T> 就够了，读多写少换 RwLock；误用三：锁里放耗时操作——拿着锁读文件、调网络、等另一个 channel，等于把所有等锁的线程一起拖住，锁里只放「改数据」那几行，锁里 panic 还会毒掉整把锁。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "验收二：项目 2 有对比数据。第 27 天的 hasher-ws 实测（本机，64 个 1 MiB 文件）：单线程 33.31ms，对多线程（4 worker）16.66ms，加速比 2.00x；另一次实测 3.49x。加速比到不了 worker 倍数：取任务要抢 Arc<Mutex<Receiver>> 的小锁，任务分发本身被串行化了一部分，加上线程创建与 channel 往返的固定开销。小目录扫描加速比 0.06x（2 个小文本文件，单线程 16.28µs 对多线程 273.74µs）不是 bug：文件太小，哈希本身只要几微秒，固定开销要几百微秒——任务粒度越小，固定开销占比越高。结合第 24 天的基准测试教训：跑一次 Instant 计时不能当作结论，要多次测量看中位数、看置信区间、拿 baseline 对比，毕业项目接 criterion 时再把这套方法正式用上。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 今天不做的事"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 5 周是 Tokio async、hyper / axum、超时与取消，项目 3 是 HTTP 反向代理。今天如果 Rustlings 提前刷到 async 相关组，看到不懂的题先跳过、记进卡点清单，不要今天就开新课。第 5 周的反向代理会直接复用今天的结构（core lib + bin 入口 + tracing），所以今天定结构时只定到「复用 hasher-ws 的拆法」，不写一行 async 代码。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo test（3 个单元测试 + 4 个 doctest，全部通过）、cargo test --features fast（4 个单元测试 + 4 个 doctest）、cargo doc --no-deps（生成 target/doc/rust_day28/index.html）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 五项全部通过。照抄就能跑，零外部依赖，不用联网下载任何 crate。它把第 4 周的四个机制串在一个 lib 里：模块与可见性（pub / pub(crate) / 私有）、文档注释与 doctest、单元测试、特性开关。"
+        },
+        {
+          "caption": "新建一个 lib crate（不是 bin）：doctest 只在 lib 里跑",
+          "code": "cargo new rust-day28 --lib\ncd rust-day28",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "Cargo.toml：fast 是个零依赖的空开关，只演示条件编译",
+          "code": "[package]\nname = \"rust-day28\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[features]\nfast = []",
+          "kind": "code",
+          "lang": "toml"
+        },
+        {
+          "caption": "src/lib.rs 完整代码：模块、文档、测试、特性四件套",
+          "code": "//! 第 28 天 · 第四周复盘验收：模块、文档、测试、特性四件套一次串起来。\n//!\n//! 一个小库演示第 4 周的全部工程化机制：\n//! - 模块与可见性（`pub` / `pub(crate)` / 私有）\n//! - 文档注释 `///` 与会被执行的 doctest\n//! - 单元测试 `#[cfg(test)]`\n//! - 特性开关 `fast`（`[features]`，零依赖）\n//!\n//! # Examples\n//!\n//! ```\n//! assert_eq!(rust_day28::count_words(\"hello rust world\"), 3);\n//! ```\n\n#![warn(missing_docs)]\n\nuse std::collections::HashMap;\n\n/// 把文本按空白切成词，返回词的个数。\n///\n/// 空白包括空格、制表符与换行；首尾与连续空白不产生空词。\n/// 实现就是 `split_whitespace` 的计数——第 22 天的教训：\n/// 写函数之前，先想清楚\"它该属于哪个模块\"。\n///\n/// # Examples\n///\n/// ```\n/// assert_eq!(rust_day28::count_words(\"hello rust world\"), 3);\n/// assert_eq!(rust_day28::count_words(\"  hello   rust  \"), 2);\n/// assert_eq!(rust_day28::count_words(\"\"), 0);\n/// ```\npub fn count_words(text: &str) -> usize {\n    words::split(text).count()\n}\n\n/// 统计词频，返回出现次数最多的前 `n` 个词。\n///\n/// 返回 `(词，次数)` 列表，按次数降序排列；次数相同时按词的字典序排列，\n/// 保证输出是确定性的——基准测试（第 24 天）最忌讳\"每次跑结果顺序都不同\"。\n///\n/// # Examples\n///\n/// ```\n/// let top = rust_day28::top_words(\"a b a c b a\", 2);\n/// assert_eq!(top, vec![(\"a\".to_string(), 3), (\"b\".to_string(), 2)]);\n/// ```\npub fn top_words(text: &str, n: usize) -> Vec<(String, usize)> {\n    let mut freq: HashMap<&str, usize> = HashMap::new();\n    for w in words::split(text) {\n        *freq.entry(w).or_insert(0) += 1;\n    }\n    let mut items: Vec<(String, usize)> =\n        freq.into_iter().map(|(w, c)| (w.to_string(), c)).collect();\n    items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));\n    items.truncate(n);\n    items\n}\n\n/// 统计文本里\"词内字符\"（字母或数字）的个数。\n///\n/// 标点与空白不算。顺带演示 `pub(crate)` 函数的合法用法：\n/// 它只在本 crate 内可见，但本 crate 的公开函数可以调它——\n/// 这就是\"对内开放、对外封闭\"的接口（第 22 天）。\n///\n/// # Examples\n///\n/// ```\n/// assert_eq!(rust_day28::count_word_chars(\"hello, rust!\"), 9);\n/// ```\npub fn count_word_chars(text: &str) -> usize {\n    text.chars().filter(|&c| words::is_word_char(c)).count()\n}\n\n/// 特性开关演示：只有开启 `fast` 特性才编译。\n///\n/// 它和 `count_words` 算的是同一个数，区别只是实现走了一条\"快路径\"：\n/// 这里只是演示 `#[cfg(feature = ...)]` 的开关机制，\n/// 真实项目里这种开关后面挂的是可选依赖或另一套实现（第 25 天）。\n///\n/// 跑 `cargo test` 时这个函数不存在；跑 `cargo test --features fast` 时才有。\n#[cfg(feature = \"fast\")]\npub fn count_words_fast(text: &str) -> usize {\n    text.split_whitespace().count()\n}\n\n/// 模块与可见性：第 22 天的三个档位都在这里。\n///\n/// - `words` 本身是 `pub`：外部能 `use rust_day28::words`。\n/// - `split` 是 `pub`：模块的公开 API。\n/// - `is_word_char` 是 `pub(crate)`：只在本 crate 内可见，\n///   外部 `use` 会报 E0603。\n/// - `normalize` 是私有的：只有本模块内能调。\npub mod words {\n    /// 把文本按空白切成词，返回迭代器。\n    pub fn split(text: &str) -> impl Iterator<Item = &str> {\n        text.split_whitespace()\n    }\n\n    /// 判断一个字符是不是\"词内字符\"（字母或数字）。\n    ///\n    /// 只在本 crate 内可见：外部 crate 调它会报 `E0603`。\n    pub(crate) fn is_word_char(c: char) -> bool {\n        c.is_alphanumeric()\n    }\n\n    /// 私有辅助：把词转成小写做归一化。\n    fn normalize(word: &str) -> String {\n        word.to_lowercase()\n    }\n\n    /// 归一化后的切词：内部演示私有函数怎么被公开函数调用。\n    pub fn split_normalized(text: &str) -> Vec<String> {\n        split(text).map(normalize).collect()\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn count_words_basic() {\n        assert_eq!(count_words(\"hello rust world\"), 3);\n        assert_eq!(count_words(\"  hello   rust  \"), 2);\n        assert_eq!(count_words(\"\"), 0);\n    }\n\n    #[test]\n    fn top_words_is_deterministic() {\n        let top = top_words(\"a b a c b a\", 2);\n        assert_eq!(top, vec![(\"a\".to_string(), 3), (\"b\".to_string(), 2)]);\n        assert_eq!(top_words(\"x\", 5).len(), 1);\n    }\n\n    #[test]\n    fn words_module_is_public() {\n        assert_eq!(words::split(\"one two\").count(), 2);\n        assert!(words::is_word_char('r'));\n        assert!(!words::is_word_char(' '));\n        assert_eq!(words::split_normalized(\"Hello RUST\"), vec![\"hello\", \"rust\"]);\n    }\n\n    #[test]\n    #[cfg(feature = \"fast\")]\n    fn fast_feature_counts_the_same() {\n        assert_eq!(count_words_fast(\"hello rust world\"), 3);\n        assert_eq!(\n            count_words_fast(\"hello rust world\"),\n            count_words(\"hello rust world\")\n        );\n    }\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "caption": "五项验证命令",
+          "code": "cargo test\ncargo test --features fast\ncargo doc --no-deps\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "cargo test 预期输出（确定性输出，与环境无关；注意分两段报告：先是单元测试，再是文档测试）：单元测试 running 3 tests，3 passed；文档测试 running 4 tests，4 passed（count_word_chars、count_words、crate 级示例、top_words 各 1 个）。cargo test --features fast：单元测试变成 4 个（多了 fast_feature_counts_the_same），文档测试仍是 4 个。cargo doc --no-deps 应生成 target/doc/rust_day28/index.html；cargo clippy 与 cargo fmt --check 应静默通过。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "动手验证三点：把 words::is_word_char 的 pub(crate) 改成私有（删掉 pub(crate)），跑 cargo test 看 count_word_chars 那行报什么错（提示：E0603，is_word_char is private），再改回来——体会「可见性是编译器在 lib 边界上查的」；删掉 top_words 的 /// 文档，跑 cargo check 看 missing_docs 警告，再把 #![warn(missing_docs)] 改成 deny，看编译直接失败，最后恢复；跑 cargo test 与 cargo test --features fast 对比测试数（3+4 对 4+4），再打开 target/doc/rust_day28/index.html，确认四个公开函数都有文档。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "Rustlings 清关：跑 rustlings verify，把 modules、workspace、tests 相关组里剩余的题清完；每道题改完后说一句它在练哪条规则，说不出来的题记进卡点清单。",
+            "项目 2 复核：回到第 27 天的 hasher-ws，在根目录依次跑 cargo test、cargo run --release -p hasher-cli（生成测试文件模式与扫描真实目录模式各一次）、cargo doc --no-deps、cargo fmt --check、cargo clippy --all-targets -- -D warnings，五项全过才算收干净；把加速比表（64 个 1 MiB 文件的 2.00x / 3.49x 与小目录的 0.06x）记进卡点清单，旁边写一句「任务粒度决定加速比」。",
+            "默写第四周对照表：不看「核心讲解」第 1 节，凭记忆写出六天知识点的「一句话核心」和「项目 2 里的落点」，写完再对照原文补漏；漏掉超过两处就把那几天的资料重读一遍。",
+            "整理卡点清单并在清单文件里给第 4 周打勾，再定第 5 周项目结构：列出本周仍卡住的概念（不超过 10 条，每条写「卡在哪一行 + 对应的规则猜想」），在 Rust-12周学习清单.md 第三至四周下打勾并记一句本周卡点；同时把第 5 周反向代理的结构定下来——复用 hasher-ws 的拆法（proxy-core lib + proxy-bin，tracing 接入 lib），写进卡点清单末尾，明天直接开工。"
+          ],
+          "verification": "Rustlings 第 4 周相关组全部通过；验收工程 cargo test 3 个单元测试 + 4 个 doctest 通过、cargo test --features fast 4+4 通过、clippy 零警告、fmt 通过、文档已生成；hasher-ws 五项全过且加速比表已补齐；能不查书写出第四周对照表并说清每条卡点对应的规则；第 5 周项目结构已定。"
+        }
+      ],
+      "checklist": [
+        "能不查书写出第四周六个知识点的对照表（crate 与 workspace / 三种测试 / 基准测试 / features 与 profile 与 lock / 文档注释 / 项目 2 拆分），并各举一个项目 2 里的落点",
+        "验收工程在本机 cargo test 通过（3 个单元测试 + 4 个 doctest），cargo test --features fast 通过（4+4），clippy 零警告、fmt 通过、文档已生成",
+        "能解释 package / crate / module / workspace 的分层、三类测试的分工、features 与 profile 与 Cargo.lock 的分工、doctest 的双重身份",
+        "Rustlings 第 4 周相关组全部通过，卡点清单已更新",
+        "项目 2 复核完成：hasher-ws 五项全过、加速比表已补齐（2.00x / 3.49x 与 0.06x），清单第三至四周已打勾并记一句卡点，第 5 周反向代理结构已定"
+      ],
+      "dayNumber": 28,
+      "goal": "不查书说清第 4 周六个知识点的核心规则与项目 2 的落点，对照第 3-4 周验收句自查过关。",
+      "lessonDate": "2026-11-22",
+      "quiz": [
+        {
+          "a": "package 是一个 Cargo.toml 定义的发布单位，可含一个 lib 与多个 bin；crate 是一个编译单位，入口是 src/lib.rs 或 src/main.rs；module 是 crate 内的组织单位，由 mod 声明长出来；workspace 是多个 package 的协作单位，根 Cargo.toml 只有 [workspace]、没有 [package] 时叫虚拟清单。没有 mod foo; 声明，foo.rs 只是磁盘上的一个文件，不算模块——模块树由声明长出来，文件只是模块住的地方。",
+          "q": "package、crate、module、workspace 各是什么？分别由什么文件或声明决定？src/foo.rs 没有 mod foo; 声明时，它算不算一个模块？"
+        },
+        {
+          "a": "单元测试住在源码文件里的 #[cfg(test)] mod tests，测内部细节（含私有函数）；集成测试住在 tests/ 目录，每个 .rs 文件一个独立测试二进制，像外部用户一样只调公开 API；文档测试住在 /// 注释里的代码块，测「文档例子是不是真的能跑」。cargo test 一次全跑完，分三段报告，先看分段标题再看每段 passed 数。bin 没有公开 API，所以 main 测不到、doctest 也只在 lib 里——想测 main 的逻辑要搬进 lib。",
+          "q": "单元测试、集成测试、文档测试各住在哪、测什么、失败时怎么定位？为什么 bin crate 的 main 测不到、doctest 只在 lib 里？"
+        },
+        {
+          "a": "features 管「编译进哪些可选功能」（条件编译 + 可选依赖）；profile 管「怎么编译」（opt-level、debug、LTO）；Cargo.lock 管「解析出了哪些 exact 版本」。serde = \"1\" 允许装 1.x 的任何版本，lock 文件把「这次实际装了哪个版本」快照下来。库的 Cargo.lock 不提交（版本由使用方最终解析），只有可执行文件与 workspace 根的 lock 文件值得提交。",
+          "q": "features、profile、Cargo.lock 各管什么？serde = \"1\" 允许装什么版本？库的 Cargo.lock 该不该提交？"
+        },
+        {
+          "a": "文档例子对人是「怎么用」的说明，对机器是会被 cargo test 抽出来编译运行的测试；改了实现、忘了改例子，测试就变红，文档与实现不会悄悄脱节。删掉公开函数的 /// 文档，#![warn(missing_docs)] 下只报 warning、编译继续；改成 deny 则直接报错、编译失败。doctest 失败时报错行号指向注释里的行（例如 src/lib.rs - count_words (line 27)），行号在注释里就是例子错了。",
+          "q": "doctest 为什么是「文档即测试」？删掉一个公开函数的 /// 文档会发生什么（warn 与 deny 的区别）？doctest 失败时报错行号指向哪里？"
+        },
+        {
+          "a": "不是写错。两个几字节的文件，哈希本身只要几微秒，线程创建、channel 往返、锁竞争的固定开销要几百微秒，固定开销把计算时间淹没了——任务粒度越小，固定开销占比越高。跑一次 Instant 计时不能当作结论，因为系统抖动、编译器优化、冷热缓存都会让单次数字失真；要多次测量看中位数、看置信区间、拿 baseline 对比改动前后，毕业项目接 criterion 时再把这套方法正式用上。",
+          "q": "扫描一个只有 2 个小文件的目录时，加速比是 0.06x（多线程反而更慢），结合第 24 天基准测试的坑解释原因，并说说「跑一次 Instant 计时」为什么不能当作结论。"
+        }
+      ],
+      "summary": "把 crate、workspace、测试、基准、依赖、文档六块工程化拼图压成一张对照表，并用一次完整验证收尾第 4 周。",
+      "title": "第四周复盘：工程化与测试自测",
+      "weekNumber": 4
     }
   ]
 }
