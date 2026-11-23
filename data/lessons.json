@@ -5647,6 +5647,244 @@
       "summary": "把 crate、workspace、测试、基准、依赖、文档六块工程化拼图压成一张对照表，并用一次完整验证收尾第 4 周。",
       "title": "第四周复盘：工程化与测试自测",
       "weekNumber": 4
+    },
+    {
+      "dayNumber": 29,
+      "weekNumber": 5,
+      "title": "async/await 与 Future：为什么需要异步",
+      "lessonDate": "2026-11-23",
+      "goal": "说清 Future 的惰性、.await 与阻塞调用的区别、Tokio runtime 的作用，并写出第一个 tokio 程序。",
+      "summary": "async 不是更快的线程，而是不用线程也能等 I/O：Future 是惰性的状态机，.await 是挂起点，阻塞调用会拖住 runtime，Rc 不能跨 await。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "三种并发模型对照",
+              "minutes": "10 分钟",
+              "detail": "读「核心讲解」第 1 节：线程 / 事件循环 / async，对照 C++ 经验"
+            },
+            {
+              "label": "Future 与 .await 的机制",
+              "minutes": "15 分钟",
+              "detail": "读第 2-3 节：惰性、poll、.await 不阻塞线程、阻塞调用的代价"
+            },
+            {
+              "label": "Tokio runtime 与 Send 要求",
+              "minutes": "15 分钟",
+              "detail": "读第 4-5 节：runtime、spawn、Send 约束与报错读法"
+            },
+            {
+              "label": "代码验证与自测",
+              "minutes": "20 分钟",
+              "detail": "敲一遍可运行示例（cargo run / clippy / fmt 三项全过），做跟练与自测题"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 为什么需要 async：三种并发模型对照"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 5-6 周的项目 3 是 HTTP 反向代理：它要同时面对几百上千个网络连接，大部分时间都在“等”——等客户端发请求、等上游回响应。先看三种写法怎么处理“等”，再看 async 解决的是哪一个痛点。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "模型一：一个连接一个线程。每来一个连接开一个线程，线程里顺序写“读请求、发上游、等响应、回客户端”，代码最直观。第 19-20 天的多线程哈希器就是这个模型。对照 C++：std::thread / pthread 每个线程默认 2MB 栈，几千个连接就是几 GB 栈内存，加上线程切换的开销，连接数一上来就吃力。线程模型的问题不在“能不能写”，而在“等 I/O 的线程太多，成本扛不住”。",
+            "模型二：单线程事件循环 + 非阻塞 I/O。一个线程、一个 epoll 循环，所有连接的状态都挂在循环里，哪个就绪处理哪个。对照 C++：epoll + 回调、libevent、asio 的写法。成本最低，但代码要写成回调嵌套：一个请求的处理逻辑被拆成“读到一半怎么办、写了一半怎么办、超时了怎么办”好几个回调，状态要自己用结构体存着，错误处理散落在各处。手写状态机能跑，但难写难改。",
+            "模型三：async/await——编译器帮你写状态机。代码写出来像模型一的顺序代码，跑起来却像模型二：每个 .await 都是一个“挂起点”，任务等 I/O 时把线程让出来，I/O 就绪时再回来继续。async fn 会被编译器编译成一个状态机：每个 .await 之前的状态、之后要恢复的局部变量，都存在这个状态机里，不用人手写。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "一句话收住：async 不是“更快的线程”，而是“不用线程也能等 I/O”。线程解决的是“同时干很多活”（CPU 并行），async 解决的是“同时等很多件事”（I/O 并发）。第 20 天的哈希器是 CPU 密集型，用线程是对的；反向代理是 I/O 密集型，用 async 是对的。两个模型各管一摊，后面会混着用。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. Future 是惰性的：async fn 调用不执行"
+        },
+        {
+          "kind": "paragraph",
+          "text": "这是今天最容易踩的第一个坑。调用 async fn 时，函数体一行都不执行——调用只返回一个 Future，一个“还没开始执行的状态机值”。对照 C++：它像写了一个 lambda 但还没调用它。真正让它跑起来的是执行器（executor）：执行器反复调用 Future 的 poll 方法，poll 返回 Pending 表示“还没好，先去干别的”，返回 Ready(值) 表示“完成了，结果在这里”。执行器收到 Pending 就把任务挂起来，等 I/O 就绪（通过 Waker 机制被唤醒）再回来继续 poll。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "所以 async 世界里有两层分工：Future 是“要做的事”，runtime 是“让它推进的人”。没有 runtime，Future 永远是 Pending。#[tokio::main] 做的就是建一个 runtime、把 main 这个 Future 驱动到完成。.await 的意思是“把当前 Future 的执行权交给执行器，等里面的 Future Ready 了再回来”——它不是“开新线程去等”，也不是“睡过去”，而是“挂起、让出线程、就绪后再回来”。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "「async fn 一调用就开始跑」——错。调用只造 Future，不执行；不 .await、不 spawn，它永远不会跑。示例第 1 段的计数器就是证据：创建 Future 后 STARTED 还是 0，.await 之后才变成 1。",
+            "「.await 会开一个新线程去等」——错。.await 不创建线程，它只是当前任务的挂起点；等 I/O 的线程被让出来去跑别的任务了。",
+            "「async 代码天生比同步代码快」——错。async 省的是“等 I/O 时占着线程”的成本；纯 CPU 计算用 async 不会变快，反而多个一层状态机开销。快不快要量，不要凭感觉。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "3. .await 不阻塞线程，阻塞调用会卡住 runtime"
+        },
+        {
+          "kind": "paragraph",
+          "text": ".await 挂起的是当前任务，线程本身没睡着——线程会立刻去跑别的就绪任务。但如果在 async 任务里调了阻塞调用，占住的就是整条执行线程，别的任务一起被拖住。阻塞调用的黑名单要背下来：std::thread::sleep、std::fs 的读写、std::net 的同步读写、长时间持有 std::sync::Mutex 的锁。它们的共同点是“调下去就不返回，线程动不了”，而 async runtime 的前提是“任务随时能让出线程”。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "示例第 3 段把这个代价量了出来：在 current_thread runtime（只有一条执行线程）里，一个任务调了 std::thread::sleep(500ms)，另一个本该 100ms 完成的任务被拖到了 601ms。对照 C++：这和“在一个 epoll 循环里调了 sleep(1)，整个循环都停了”是同一个道理——执行器就是那个循环，阻塞调用就是往循环里塞了一块石头。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "有 async 版本的 API 就用 async 版：tokio::time::sleep 替 std::thread::sleep，tokio::fs 替 std::fs，tokio::net::TcpStream 替 std::net::TcpStream。它们内部也是 .await，等的时候让出线程。",
+            "没有 async 版的阻塞操作（调 C 库、读文件做重计算）交给 spawn_blocking：它把闭包送到一个专门的阻塞线程池里跑，不占执行线程。示例第 4 段：同样的 500ms 阻塞调用进了阻塞线程池，任务 B 按时在 101ms 完成。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "4. Tokio runtime：谁在驱动 Future"
+        },
+        {
+          "kind": "paragraph",
+          "text": "#[tokio::main] 不是语法糖，是“建 runtime + 驱动 main”的完整展开：它把 main 变成一个 async fn，建一个 Tokio runtime，再用 block_on 把这个 Future 驱动到完成。runtime 有两种 flavor（风味），选错会影响行为。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "multi_thread（默认）：多工作线程执行器，工作线程数默认等于 CPU 核数。任务可以在线程间迁移，适合服务器这种要同时跑很多任务的场景——第 5-6 周的反向代理就用它。",
+            "current_thread：单线程执行器，所有任务都在一条线程上轮流跑。适合示例、调试与任务数很少的场景。今天的示例故意用它，因为阻塞调用的代价在它身上看得最清楚。",
+            "tokio::spawn：把一个 Future 交给 runtime 去跑，立刻返回 JoinHandle；handle.await 可以等它完成、拿它的返回值，handle.abort() 可以取消它。spawn 出去的任务与当前任务并发跑。",
+            "tokio::task::block_on：在同步代码里跑一个 Future 到完成。只在 main 之外、“同步世界要调 async 代码”的边界上用；库代码不要自己建 runtime——runtime 该由最终的二进制程序建一次。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "5. Send 要求与报错读法"
+        },
+        {
+          "kind": "paragraph",
+          "text": "tokio::spawn 要求 Future 是 Send 的：因为 multi_thread 下任务可能在线程间迁移，任务里捕获的所有值都得能安全地换线程。Rc、RefCell 不是 Send，所以不能跨 .await 持有它们——这是第 3 天借用、第 16 天 Rc/RefCell 之后，第三次遇到“类型系统的边界”，只不过这次边界画在“任务能不能换线程”上。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这段代码编译不过（故意写错的示例，不要放进工程）：let data = Rc::new(42); 再 tokio::spawn(async move { sleep(10ms).await; println!(\"{data}\"); })。本机实测的报错（tokio 1.54.1，cargo check）共三行，读法固定："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "future cannot be sent between threads safely——结论：这个 Future 不能在线程间安全传递。",
+            "the trait Send is not implemented for Rc<i32>——原因：卡在哪一个类型上（Rc<i32> 不是 Send）。",
+            "required by a bound in tokio::spawn——位置：是 spawn 的 Send 约束在查它，不是你的业务代码错了。"
+          ]
+        },
+        {
+          "kind": "callout",
+          "text": "改法也固定：Rc 换 Arc，RefCell 换 Mutex；如果锁要跨 .await 持有，再换成 tokio::sync::Mutex（它的锁是“等锁时也让出线程”，而 std::sync::Mutex 的锁一等就占住线程）。反过来，不跨 .await 的 Rc 完全合法：只在一次 .await 之前用完、用完就丢，编译器不会管你。报错的判断标准永远是“这个值有没有活过一个 .await 点”。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（tokio 1.54.1，输出见下）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全过。照抄就能跑，需要联网下载 tokio（约 18 秒编译）。"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "caption": "新建 bin crate",
+          "code": "cargo new rust-day29 --bin\ncd rust-day29"
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "caption": "Cargo.toml：features = [\"full\"] 一次性打开 tokio 的全部功能",
+          "code": "[package]\nname = \"rust-day29\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"full\"] }"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "src/main.rs 完整代码：Future 惰性、并发等待、阻塞拖住 runtime、spawn_blocking 四个现象",
+          "code": "//! 第 29 天 · async/await 与 Future：为什么需要异步。\n//!\n//! 四个现象一次看清：\n//! 1. Future 是惰性的：async fn 调用只造出 Future，不执行；\n//! 2. `.await` 不阻塞线程：两个 300ms 睡眠可以同时等；\n//! 3. 阻塞调用会拖住整个 runtime（current_thread 下最明显）；\n//! 4. 阻塞操作要交给 `spawn_blocking`。\n//!\n//! 运行：`cargo run`（tokio 1.x，features = [\"full\"]）。\n\nuse std::sync::atomic::{AtomicUsize, Ordering};\nuse std::time::{Duration, Instant};\n\nuse tokio::time::sleep;\n\nstatic STARTED: AtomicUsize = AtomicUsize::new(0);\n\nasync fn greet(name: &str) {\n    STARTED.fetch_add(1, Ordering::SeqCst);\n    println!(\"你好，{name}！\");\n}\n\n#[tokio::main(flavor = \"current_thread\")]\nasync fn main() {\n    // ---- 1. Future 是惰性的 ----\n    let fut = greet(\"Rust\");\n    println!(\n        \"创建 Future 后，STARTED = {}\",\n        STARTED.load(Ordering::SeqCst)\n    );\n    fut.await;\n    println!(\"await 之后，STARTED = {}\", STARTED.load(Ordering::SeqCst));\n\n    // ---- 2. .await 不阻塞线程：两个睡眠同时等 ----\n    let start = Instant::now();\n    let ((), ()) = tokio::join!(\n        sleep(Duration::from_millis(300)),\n        sleep(Duration::from_millis(300)),\n    );\n    let joined = start.elapsed().as_millis();\n    println!(\"两个 300ms 睡眠 join! 用时：{joined}ms（顺序等要 600ms）\");\n    assert!(joined < 550, \"并发等待应该远小于 600ms\");\n\n    // ---- 3. 阻塞调用拖住 runtime ----\n    let start = Instant::now();\n    let handle = tokio::spawn(async move {\n        sleep(Duration::from_millis(100)).await;\n        start.elapsed().as_millis()\n    });\n    std::thread::sleep(Duration::from_millis(500));\n    let b_ms = handle.await.unwrap();\n    println!(\"任务 B 在 {b_ms}ms 完成（本该 100ms，却被阻塞调用拖到 500ms 之后）\");\n    assert!(b_ms >= 500, \"阻塞调用应该拖住任务 B\");\n\n    // ---- 4. 正确做法：spawn_blocking ----\n    let start = Instant::now();\n    let handle = tokio::spawn(async move {\n        sleep(Duration::from_millis(100)).await;\n        start.elapsed().as_millis()\n    });\n    tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(500)))\n        .await\n        .unwrap();\n    let b_ms = handle.await.unwrap();\n    println!(\"任务 B 在 {b_ms}ms 完成（阻塞调用进了阻塞线程池，互不干扰）\");\n    assert!(b_ms < 400, \"spawn_blocking 不应拖住任务 B\");\n}"
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "caption": "三项验证命令",
+          "code": "cargo run\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check"
+        },
+        {
+          "kind": "paragraph",
+          "text": "本机实测 cargo run 输出：创建 Future 后，STARTED = 0；你好，Rust！；await 之后，STARTED = 1；两个 300ms 睡眠 join! 用时：301ms（顺序等要 600ms）；任务 B 在 601ms 完成（本该 100ms，却被阻塞调用拖到 500ms 之后）；任务 B 在 101ms 完成（阻塞调用进了阻塞线程池，互不干扰）。"
+        },
+        {
+          "kind": "callout",
+          "text": "毫秒数会因机器有几毫秒浮动，关键是三组数字的关系：301 < 600（两个睡眠确实同时等）、601 > 500（阻塞调用确实拖住了任务 B）、101 ≈ 100（spawn_blocking 确实互不干扰）。cargo clippy 与 cargo fmt --check 应静默通过。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "动手验证两点：把 #[tokio::main(flavor = \"current_thread\")] 的 flavor 参数删掉（变回默认 multi_thread），再跑一次，看第 3 段的 601ms 变成多少、为什么（跟练 1）；把第 2 段的 tokio::join! 改成两个先后 .await（先等第一个 300ms、再等第二个 300ms），看用时变成多少——这是“同时等”与“顺序等”最直观的对比。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "换 flavor 再跑：把示例的 flavor = \"current_thread\" 删掉（变回默认 multi_thread），再跑一次 cargo run：三组数字还一样吗？重点看第 3 段的 601ms 变成多少、为什么（提示：multi_thread 下阻塞调用只占住一个工作线程，任务 B 可以被别的线程执行——这正是“current_thread 让阻塞的代价看得见”的原因，也是服务器默认用 multi_thread 的原因）。",
+            "五任务并发：写一个小程序，同时 spawn 5 个任务，每个 sleep 不同时长（100/200/300/400/500ms）后打印自己的编号与用时；用 tokio::join! 等全部完成；断言总用时 < 700ms。再把其中一个任务的 sleep 换成 std::thread::sleep，观察总用时与打印顺序的变化（提示：current_thread 下换掉的那一个会拖住所有人；multi_thread 下只拖住一个工作线程）。",
+            "故意制造 Send 报错：把第 5 节那段 Rc 跨 await 的代码单独建一个工程跑 cargo check，读报错的三行，再按提示把 Rc 换成 Arc 跑通；然后把 Rc::new(42) 改成只在 .await 之前用完（打印完再 await），看报错消失——体会“判断标准是值有没有活过一个 .await 点”。",
+            "读 Tokio 官方教程“Hello Tokio”与“Spawning”两节（tokio.rs，免费在线），对照今天第 2、4 节做笔记；把“async 与多线程的区别”写成三句话记进卡点清单，并写下项目 3 反向代理的启动计划：proxy-core lib + proxy-bin 的拆法（复用第 27 天 hasher-ws 的结构），明天直接开工。"
+          ],
+          "verification": "示例 cargo run 三组数字关系正确、clippy 零警告、fmt 通过；跟练 2 的 5 任务总用时 < 700ms；能复述 Send 报错三行的读法与 Rc 跨 await 的改法；卡点清单已更新（“async 与多线程的区别”三句话 + 项目 3 启动计划）。"
+        },
+        {
+          "kind": "heading",
+          "text": "自测题"
+        },
+        {
+          "kind": "paragraph",
+          "text": "共 5 道，答案在网站上点击展开查看。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "async fn 调用后，函数体执行了吗？Future 是什么？谁负责驱动它执行？",
+          "a": "没执行。async fn 调用只返回一个 Future（一个还没开始执行的状态机值），必须被执行器 poll 驱动。调用 async fn 像“写好菜谱但还没开火”。驱动者是 runtime（#[tokio::main] 建的那个），.await 是把当前 Future 的执行权交给执行器、等它 Ready 再回来。"
+        },
+        {
+          "q": ".await 与 std::thread::sleep 有什么本质区别？为什么在 async 任务里调 std::thread::sleep 会拖住别的任务？",
+          "a": ".await 是挂起点：当前任务挂起、线程去跑别的任务，线程本身不睡；std::thread::sleep 是阻塞调用：占住整条执行线程，别的任务排不上。current_thread 下一个阻塞调用能拖住所有任务（示例 601ms）；multi_thread 下只占住一个工作线程，但工作线程被占满后新任务同样排不上。"
+        },
+        {
+          "q": "#[tokio::main] 做了什么？multi_thread 与 current_thread 各适合什么场景？",
+          "a": "#[tokio::main] 把 main 变成 async fn，并建一个 Tokio runtime、用 block_on 驱动它跑完。multi_thread（默认）是多工作线程执行器，适合服务器这种要同时跑很多任务的场景；current_thread 是单线程执行器，适合示例、调试与任务数很少的场景——阻塞调用的代价在它身上看得最清楚。"
+        },
+        {
+          "q": "下面这段代码为什么编译不过？报错的三行各是什么意思？应该怎么改？let data = Rc::new(42); tokio::spawn(async move { sleep(10ms).await; println!(\"{data}\"); });",
+          "a": "Rc 不是 Send，而 tokio::spawn 要求 Future 是 Send（任务可能在线程间迁移）。三行各是：future cannot be sent between threads safely（结论）；the trait Send is not implemented for Rc<i32>（原因：哪个类型）；required by a bound in tokio::spawn（位置：spawn 的 Send 约束）。改法：Rc 换 Arc（RefCell 换 Mutex，锁要跨 .await 再换 tokio::sync::Mutex）；不跨 .await 的 Rc 完全合法。"
+        },
+        {
+          "q": "async 与“多开几个线程”的区别是什么？什么时候该用 async、什么时候该用线程？结合第 20 天的多线程哈希器与第 5-6 周的反向代理说。",
+          "a": "线程是“一个人干一件事”，开线程就有栈与调度成本，适合 CPU 密集型并行（第 20 天的哈希器：每个文件都要实打实算哈希）；async 是“一个人轮流等很多件事”，任务挂起几乎零成本，适合 I/O 密集型并发（反向代理：同时等几百上千个连接，大部分时间在等网络）。两者可以混用：CPU 计算放 spawn_blocking 或线程池，I/O 等待放 async。"
+        }
+      ],
+      "checklist": [
+        "能不查书解释：Future 的惰性、.await 不阻塞线程、阻塞调用拖住 runtime、Tokio runtime 的作用",
+        "示例在本机 cargo run 通过，三组数字关系正确（301 < 600、601 > 500、101 ≈ 100），clippy 零警告、fmt 通过",
+        "能读出「future cannot be sent between threads safely」报错的三行含义，并知道 Rc 跨 await 的改法（Arc / tokio::sync::Mutex）",
+        "跟练 2 的 5 任务并发程序跑通，总用时 < 700ms；能说清 multi_thread 下阻塞调用为什么不拖住任务 B",
+        "卡点清单已更新（“async 与多线程的区别”三句话 + 项目 3 反向代理启动计划）"
+      ]
     }
   ]
 }
