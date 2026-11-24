@@ -5885,6 +5885,169 @@
         "跟练 2 的 5 任务并发程序跑通，总用时 < 700ms；能说清 multi_thread 下阻塞调用为什么不拖住任务 B",
         "卡点清单已更新（“async 与多线程的区别”三句话 + 项目 3 反向代理启动计划）"
       ]
+    },
+    {
+      "dayNumber": 30,
+      "weekNumber": 5,
+      "title": "tokio::spawn 与任务管理：JoinHandle、取消与 JoinSet",
+      "lessonDate": "2026-11-24",
+      "goal": "掌握 tokio::spawn 与任务管理：用 JoinHandle 拿返回值、用 JoinSet 按完成顺序收结果、区分 abort 硬取消与 select! 优雅取消。",
+      "summary": "spawn 出去的任务由 runtime 主动推进，JoinHandle 是拿结果的回执单；JoinSet 按完成顺序收一堆任务的结果；abort 是硬掐断、select! 是优雅收尾；drop 句柄不取消任务，任务 panic 不拖垮进程。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "spawn 与 JoinHandle",
+              "minutes": "15 分钟",
+              "detail": "读第 1-2 节：任务、返回值、JoinError 的读法"
+            },
+            {
+              "label": "JoinSet 与取消",
+              "minutes": "20 分钟",
+              "detail": "读第 3-5 节：按完成顺序收结果、abort、优雅取消"
+            },
+            {
+              "label": "代码验证与自测",
+              "minutes": "25 分钟",
+              "detail": "敲一遍可运行示例（cargo run / clippy / fmt 三项全过），做跟练与自测题"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. spawn：把 Future 交给 runtime，自己继续往下走"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 29 天说过，Future 是“要做的事”，runtime 是“让它推进的人”。tokio::spawn 就是把 Future 交给 runtime 的动作：调用 spawn 的瞬间，任务就被排进 runtime 的队列，spawn 立刻返回一个 JoinHandle，当前任务不等它，自己继续往下走。对照 C++：std::thread 也是“启动后立刻返回”，但线程是操作系统对象，一个连接一个线程的成本在第 29 天已经算过账了；Tokio 任务只是 runtime 里的一个 Future 状态机，创建成本接近一次堆分配，几千个任务同时挂着也不心疼。另一层对照是 std::async：它返回的 future 必须有人去等才推进，而 spawn 出去的任务由 runtime 主动推进，你不 await 它也会跑完。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "spawn 有两条硬约束：第 29 天已讲过一条（Future 必须是 Send，multi_thread 下任务可能在线程间迁移）；第二条是 'static——任务可能比 spawn 它的函数活得久，所以不能借用栈上的局部变量，要 move 所有权进去。实务上就是 Arc 共享、或者把 owned 数据 move 进去。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. JoinHandle：任务的“回执单”，await 它拿返回值"
+        },
+        {
+          "kind": "paragraph",
+          "text": "JoinHandle<T> 就是 spawn 返回的那张“回执单”：.await 它，等任务完成，拿回 T。但返回值外面还包了一层 Result：Result<T, JoinError>。JoinError 只有两种失败，读法固定：is_cancelled() 表示任务被 abort() 取消了；is_panic() 表示任务里 panic 了。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "示例第 1 段演示了一个容易误判的点：h1 睡 200ms、h2 睡 100ms，先 await h1 再 await h2，总耗时是 200ms 而不是 300ms——因为两个任务在后台同时跑，await 只是“等它”，不是“启动它”。但反过来也成立：如果你先 await 一个 60 秒的长任务，再 await 那个 100ms 的短任务，短任务的结果会被长任务拖住——await 的顺序决定你“拿到结果”的顺序，不决定任务“完成”的顺序。需要“谁先完成先处理谁”，用第 3 节的 JoinSet，不要用 Vec<JoinHandle> 顺序 await。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. JoinSet：一堆同类任务的“收件箱”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "反向代理的典型场景：同时向上游发 5 个请求，谁先回先处理谁；或者 accept 循环里每个连接一个任务，要统一管理。JoinSet 就是干这个的：join_next().await 每次返回最先完成的那个任务的结果。示例第 2 段的打印顺序是 40、50、30（100ms、200ms、300ms），而不是 spawn 的 3、4、5 顺序。JoinSet 还有两个配套能力：len() 看还剩几个任务；abort_all() 一次取消全部——第 31 天做“超时后取消整批上游请求”时直接用得上。"
+        },
+        {
+          "kind": "callout",
+          "text": "什么时候用 Vec<JoinHandle>、什么时候用 JoinSet：一句话——结果要按 spawn 顺序一一对应（比如“第 i 个文件对应第 i 个哈希”）用 Vec；结果谁先到先处理（比如“哪个上游先回就先用哪个”）用 JoinSet。第 20 天的哈希器是前者，第 5-6 周的反向代理是后者。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 取消任务：abort() 是“掐断”，select! 是“商量”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "硬取消 handle.abort()：任务会在下一个 .await 点被取消，.await 之后的代码一行都不执行，JoinHandle.await 返回 Err（is_cancelled() 为真）。三个要点要背下来：abort 不是“立即杀死”——如果任务正卡在阻塞调用里（比如第 29 天黑名单上的 std::thread::sleep），abort 要等到阻塞调用返回、任务回到 .await 点才生效；abort 不会跑任何收尾代码；还有一个 AbortHandle（handle.abort_handle()），可以在不持有 JoinHandle 的情况下留一个“取消把手”，适合“spawn 的地方和决定取消的地方不在一处”的结构。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "优雅取消 select! + 信号：任务自己在“干活”和“停工信号”之间二选一，收到信号后自己收尾再退出。示例第 4 段用 oneshot 发一次停工信号，任务收到后返回“收尾后退出”——真实的收尾代码就写在返回之前：关上游连接、记一条日志、释放资源。abort 是别人替你决定“到此为止”，select 是任务自己决定“怎么体面地停”。反向代理的关机流程应该是后者：收到 SIGTERM → 发停工信号 → 每个连接任务自己关连接、记日志 → 主循环等所有任务收完再退出。tokio::sync::watch 和 tokio_util::sync::CancellationToken 都是同一个思路的现成工具，项目 3 里再选。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 丢掉 JoinHandle 不等于取消任务"
+        },
+        {
+          "kind": "paragraph",
+          "text": "这是今天最容易踩的坑，示例第 5 段就是证据：drop(detached) 之后，任务照样跑完了。JoinHandle 只是“回执单”，丢掉它等于“不要回执了”，任务本身还在 runtime 里跑，直到自己完成。想让任务“跑完就忘”（比如记一条日志、发一个统计），丢 handle 是合法写法；但如果你的意图是“这个任务不重要了，让它停下”，丢 handle 是错的——它会继续占着连接、继续写数据，直到自己跑完。正确的“停下”是 abort()。还有一点：main 一结束，runtime 就关掉，还没跑完的 detached 任务会被直接丢弃，连 panic 都不会报告。反向代理里 accept 循环 spawn 的连接任务如果 handle 全丢了，关机时你连“还有几个连接没处理完”都数不出来——项目 3 会用 JoinSet 管住它们。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 任务 panic 不拖垮进程，但也别无脑 unwrap"
+        },
+        {
+          "kind": "paragraph",
+          "text": "示例第 6 段：任务里 panic!，打印了一条 panic 信息，但 JoinHandle.await 返回的是 Err（is_panic() 为真），main 照常打印“main 结束”、进程正常退出。对照 C++：std::thread 里的异常如果没接住，std::terminate 会把整个进程带走；Tokio 任务的 panic 被限制在任务内部，runtime 只把它记成一个 JoinError。这对反向代理是救命的设计：某个连接的处理任务因为上游返回了畸形数据而 panic，代理进程本身不能跟着死——但前提是有人处理这个 Err。如果你写 handle.await.unwrap()，第一个 panic 的连接任务就会把整个代理进程 unwrap 死。正确的姿势是第 10 天错误处理的翻版：match 这个 Result，panic 的记一条 error 日志、关掉这个连接、继续 accept 下一个。"
+        },
+        {
+          "kind": "callout",
+          "text": "常见误解三条：①「spawn 出去的任务，main 结束时会等它跑完」——错。main 一结束 runtime 就关，没跑完的任务直接丢弃。想等，await 它的 JoinHandle、或者用 JoinSet 收完。②「drop(handle) 就是取消」——错。drop 只是不要回执，任务继续跑；取消要用 abort() 或优雅取消。③「abort() 能立刻停掉任何任务」——错。只在下一个 .await 点生效；卡在阻塞调用里的任务取消不了，收尾代码也不会跑。"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（tokio 1.54.1）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全过。先建工程并把 Cargo.toml 的依赖换成 tokio = { version = \"1\", features = [\"full\"] }，再把 src/main.rs 换成下面的完整代码，然后 cargo run。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "caption": "src/main.rs 完整代码（已验证通过）",
+          "code": "//! 第 30 天 · tokio::spawn 与任务管理：JoinHandle、取消与 JoinSet。\n//!\n//! 五个现象一次看清：\n//! 1. JoinHandle 拿任务返回值，两个任务的完成顺序不等于 spawn 顺序；\n//! 2. JoinSet 按完成顺序收结果，适合“一堆同类任务，谁先完先处理谁”；\n//! 3. abort() 取消任务，JoinError 用 is_cancelled() 判断；\n//! 4. 优雅取消：oneshot + select!，让任务自己收尾再退出；\n//! 5. 丢掉 JoinHandle 不等于取消任务；任务 panic 不会拖垮整个进程。\n//!\n//! 运行：`cargo run`（tokio 1.x，features = [\"full\"]）。\n\nuse std::time::Duration;\nuse tokio::task::JoinSet;\nuse tokio::time::sleep;\n\nasync fn work(id: usize, ms: u64) -> usize {\n    sleep(Duration::from_millis(ms)).await;\n    println!(\"任务 {id} 完成（睡了 {ms}ms）\");\n    id * 10\n}\n\n#[tokio::main]\nasync fn main() {\n    // ---- 1. JoinHandle 拿返回值 ----\n    let h1 = tokio::spawn(work(1, 200));\n    let h2 = tokio::spawn(work(2, 100));\n    let (r1, r2) = (h1.await.unwrap(), h2.await.unwrap());\n    println!(\"JoinHandle 返回值：{r1}、{r2}（h2 先完成，但 await 顺序决定打印顺序）\");\n\n    // ---- 2. JoinSet：按完成顺序收结果 ----\n    let mut set = JoinSet::new();\n    for (id, ms) in [(3, 300), (4, 100), (5, 200)] {\n        set.spawn(work(id, ms));\n    }\n    while let Some(res) = set.join_next().await {\n        println!(\"JoinSet 收到：{}\", res.unwrap());\n    }\n\n    // ---- 3. abort() 取消任务 ----\n    let long = tokio::spawn(async {\n        sleep(Duration::from_secs(60)).await;\n        \"永远等不到\"\n    });\n    sleep(Duration::from_millis(100)).await;\n    long.abort();\n    match long.await {\n        Err(e) if e.is_cancelled() => println!(\"长任务已被取消（is_cancelled）\"),\n        other => println!(\"意外结果：{other:?}\"),\n    }\n\n    // ---- 4. 优雅取消：oneshot + select! ----\n    let (tx, rx) = tokio::sync::oneshot::channel::<()>();\n    let worker = tokio::spawn(async move {\n        tokio::select! {\n            _ = sleep(Duration::from_secs(60)) => \"干完了\",\n            _ = rx => \"收到停工信号，收尾后退出\",\n        }\n    });\n    sleep(Duration::from_millis(100)).await;\n    let _ = tx.send(());\n    println!(\"优雅取消结果：{}\", worker.await.unwrap());\n\n    // ---- 5. 丢掉 JoinHandle 不等于取消 ----\n    let detached = tokio::spawn(async {\n        sleep(Duration::from_millis(150)).await;\n        println!(\"被丢掉句柄的任务照样跑完了\");\n    });\n    drop(detached);\n    sleep(Duration::from_millis(300)).await;\n\n    // ---- 6. 任务 panic 不拖垮进程 ----\n    let panicky = tokio::spawn(async {\n        panic!(\"模拟 handler 崩了\");\n    });\n    match panicky.await {\n        Err(e) if e.is_panic() => println!(\"任务 panic 了，但进程没死（is_panic）\"),\n        other => println!(\"意外结果：{other:?}\"),\n    }\n\n    println!(\"main 结束\");\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "本机实测 cargo run 输出（毫秒数会因机器有几毫秒浮动，关键是四组关系）：任务 2（100ms）比任务 1（200ms）先完成，但返回值仍按 await 顺序是 10、20；JoinSet 收到的顺序是 40、50、30——按完成时间，不按 spawn 顺序；“长任务已被取消（is_cancelled）”说明 abort 生效；“被丢掉句柄的任务照样跑完了”说明 drop 不取消；panic 那段标准输出里有两行 stderr 的 panic 报告，但进程照常走到了“main 结束”。cargo clippy 与 cargo fmt --check 应静默通过。"
+        },
+        {
+          "kind": "callout",
+          "text": "动手验证两点：把第 3 段 sleep(Duration::from_secs(60)) 换成 std::thread::sleep(Duration::from_secs(5))，看 abort 后要等多久才返回取消错误——体会“卡在阻塞调用里的任务取消不了”；把第 5 段 main 里的 sleep(300ms) 删掉，看“被丢掉句柄的任务”还会不会打印——体会“main 结束时没跑完的 detached 任务直接丢弃”。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "abort_all 实战：spawn 5 个任务进 JoinSet，每个 sleep 不同时长（100/200/300/400/500ms）；等 150ms 后调用 set.abort_all()，再用 join_next 循环收结果，数一数几个 Ok、几个 Err(is_cancelled)，并解释为什么 100ms 那个能完成、其余都被取消。",
+            "带超时的批量任务：spawn 5 个 sleep 随机时长（100-800ms）的任务，用 tokio::time::timeout(Duration::from_millis(400), set.join_all()) 收结果；超时后调 abort_all，统计完成了几个、取消了几个。把 timeout 的 400ms 改成 900ms 再跑一次，对比两次的完成数——这是明天“超时与取消”课的预热，也是项目 3 上游超时的雏形。",
+            "优雅取消 vs abort 对比：写一个循环打印心跳的任务，每 200ms 打印一次“心跳”；main 里 1 秒后先用 oneshot 发停工信号，任务收到后打印“收尾：已写日志”再退出；再把同一套代码改成 handle.abort()，看“收尾”还打不打印。把两种行为的差异写进卡点清单。",
+            "读 Tokio 官方教程“Spawning”与“Select”两节（tokio.rs，免费在线），对照今天第 4-5 节做笔记；为项目 3 写任务结构草图：accept 循环每来一个连接 spawn 一个任务、JoinSet 管住所有连接任务、关机时 oneshot 信号怎么传到每个任务，明天直接开工。"
+          ],
+          "verification": "示例 cargo run 四组关系正确、clippy 零警告、fmt 通过；跟练 1 能说清 abort_all 后 Ok 与 Err 的个数及原因；跟练 3 能说清优雅取消与 abort 在收尾行为上的差异；卡点清单已更新（项目 3 任务结构草图）"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "tokio::spawn 返回什么？spawn 出去的任务什么时候开始跑？main 结束时还没跑完的任务会怎样？",
+          "a": "返回 JoinHandle<T>。spawn 调用后任务就被排进 runtime，不用等有人 await 它也会跑。main 一结束 runtime 就关，没跑完的任务直接丢弃；想等它跑完，要 await 它的 JoinHandle 或用 JoinSet 收完。"
+        },
+        {
+          "q": "下面这段代码总耗时是多少？为什么？如果把两个 await 的顺序调换，总耗时变吗？打印顺序变吗？\nlet h1 = tokio::spawn(work(1, 200));\nlet h2 = tokio::spawn(work(2, 100));\nlet (r1, r2) = (h1.await.unwrap(), h2.await.unwrap());",
+          "a": "总耗时约 200ms。两个任务在后台同时跑，h2 在 100ms 时已完成，h1 在 200ms 时完成；先 await h1 要等 200ms，再 await h2 时它早就完成了，立刻返回。调换 await 顺序总耗时不变（还是 200ms），打印顺序会变——await 的顺序决定“拿到结果”的顺序，不决定任务“完成”的顺序。"
+        },
+        {
+          "q": "drop(handle) 会取消任务吗？abort() 与优雅取消（select! + oneshot）有什么区别？各适合什么场景？",
+          "a": "不会。drop 只是丢掉“回执单”，任务继续跑；取消要用 abort 或优雅取消。abort 是硬取消：在下一个 .await 点把任务丢掉，收尾代码不跑，JoinError 的 is_cancelled() 为真；适合“不要了，立刻停”的场景（比如超时后丢弃上游请求）。优雅取消是任务自己在 select! 里收到停工信号后收尾再退出；适合关机、连接关闭这种“停之前要收尾”的场景。"
+        },
+        {
+          "q": "JoinSet 与 Vec<JoinHandle> 各适合什么场景？join_next 与依次 await 有什么区别？",
+          "a": "结果要按 spawn 顺序一一对应（第 i 个文件对应第 i 个哈希）用 Vec<JoinHandle>；结果谁先到先处理（哪个上游先回就先用哪个）用 JoinSet。join_next 每次返回最先完成的任务的结果；依次 await 是按固定顺序等，慢的会拖住后面已经完成的结果的拿取。"
+        },
+        {
+          "q": "任务里 panic 会怎样？JoinHandle.await 返回什么？为什么反向代理的连接处理任务不能对 JoinHandle 无脑 unwrap？",
+          "a": "任务 panic 不会拖垮进程：panic 被限制在任务内部，JoinHandle.await 返回 Err，is_panic() 为真。反向代理里如果对 JoinHandle 无脑 unwrap，第一个 panic 的连接任务会把整个代理进程 unwrap 死——正确做法是 match 这个 Result，panic 的记 error 日志、关掉这个连接、继续 accept 下一个。"
+        }
+      ],
+      "checklist": [
+        "能不查书解释：spawn 与 JoinHandle 的关系、JoinError 的两种失败、JoinSet 按完成顺序收结果、abort 与优雅取消的区别",
+        "示例在本机 cargo run 通过，四组关系正确（h2 先完成但返回值按 await 顺序、JoinSet 按 40/50/30 收到、abort 返回 is_cancelled、drop 句柄任务照跑），clippy 零警告、fmt 通过",
+        "能说清 abort_all 之后 Ok 与 Err 的个数及原因（跟练 1）",
+        "能说清优雅取消与 abort 在收尾行为上的差异（跟练 3）",
+        "卡点清单已更新（项目 3 任务结构草图：accept 循环 + JoinSet + 关机信号）"
+      ]
     }
   ]
 }
