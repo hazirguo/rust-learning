@@ -6048,6 +6048,249 @@
         "能说清优雅取消与 abort 在收尾行为上的差异（跟练 3）",
         "卡点清单已更新（项目 3 任务结构草图：accept 循环 + JoinSet + 关机信号）"
       ]
+    },
+    {
+      "dayNumber": 31,
+      "weekNumber": 5,
+      "title": "超时与取消",
+      "lessonDate": "2026-11-25",
+      "goal": "给任何异步操作套 timeout 并读懂 Elapsed、用 select! 写抢答与优雅关机、解释取消就是把 Future 丢掉并用 Drop 守卫保证取消时资源一定释放。",
+      "summary": "超时不是杀线程，是把 Future 丢掉；取消时的资源释放靠 Drop 守卫，select! 是多个 Future 的抢答，取消安全决定了哪些 Future 能放心地中途丢掉。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "timeout 与 Elapsed",
+              "minutes": "15 分钟",
+              "detail": "读核心讲解第 1-2 节：超时不是杀线程，是丢 Future；取消时 Drop 守卫跑收尾"
+            },
+            {
+              "label": "select! 与取消安全",
+              "minutes": "20 分钟",
+              "detail": "读第 3-4 节：抢答、biased、哪些 Future 取消后会丢数据"
+            },
+            {
+              "label": "代码验证与自测",
+              "minutes": "25 分钟",
+              "detail": "敲一遍可运行示例（cargo run / clippy / fmt 三项全过），做跟练与自测题"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. timeout：给 Future 设一个“最晚交卷时间”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "timeout(期限, future) 返回 Result<T, Elapsed>：期限内完成是 Ok(结果)，到点没完成是 Err(Elapsed)。Elapsed 不是 panic、不是“失败”，它只表示“到点了”——处理方式由你定：重试、换上游、返回 504、记日志，都行。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "use std::time::Duration;\nuse tokio::time::timeout;\n\nmatch timeout(Duration::from_millis(200), slow_query(500)).await {\n    Ok(v) => println!(\"完成了：{v}\"),\n    Err(e) => println!(\"超时：{e}\"), // Elapsed，Display 是 \"deadline has elapsed\"\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：std::future::wait_for 等的是“别的线程算完”，超时后那个线程照样在算，你只能“不等它”；setsockopt(SO_RCVTIMEO) 是给 socket 设读超时，超时后连接没断。Rust 的 timeout 比这两者都彻底：超时后它把那个 Future 直接丢掉（drop），那份“活”就停了——不是“不等结果”，是“活本身被取消”。这也是它能用在反向代理里的原因：上游 200ms 没回，代理不等了，连接也不要了，资源立刻回到池子里。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "只在 .await 点取消：Future 被 drop 时，它正停在哪个 .await 上就停在那，.await 之后的代码一行不执行——和第 30 天 abort() 的行为一模一样。",
+            "阻塞调用取消不了：如果 Future 正卡在 std::thread::sleep 或同步文件读写里，执行器没有机会 poll 它，timeout 的期限到了也只能等它先回来——这就是第 29 天坚持“阻塞操作进 spawn_blocking”的第三个原因。",
+            "超时不等于“对方停了”：timeout 只取消你这一侧的 Future。上游服务器不知道你不等了，它可能还在算、还在写——所以“超时后重试”要小心：重试一次等于上游可能算两次，写操作重试前要确认幂等性（项目 3 里只对 GET 类读请求自动重试）。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "2. 取消就是 drop：Drop 守卫是取消时的“遗嘱执行人”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "超时后 Future 被丢掉时会发生什么？Rust 的答案是固定的：Future 里所有局部变量按声明的逆序被 drop，它们的 Drop::drop 全部会跑。示例第 3 段就是证据：timeout(200ms, work_with_conn(7, 500ms)) 超时后，输出里先出现“连接 7 已关闭”，再出现“超时”——Future 被 drop 的瞬间，_conn 的 Drop 跑了，连接被关了。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "struct Conn {\n    id: usize,\n}\n\nimpl Drop for Conn {\n    fn drop(&mut self) {\n        println!(\"连接 {} 已关闭（Drop 收尾跑了）\", self.id);\n    }\n}\n\nasync fn work_with_conn(id: usize, ms: u64) -> &'static str {\n    let _conn = Conn { id };\n    sleep(Duration::from_millis(ms)).await;\n    \"干完了\"\n}"
+        },
+        {
+          "kind": "paragraph",
+          "text": "取消时资源释放的全部机制就是这一句：不需要专门的“取消回调”，只要把“必须释放的东西”包进一个有 Drop 的守卫里，取消、panic、正常返回三种出口都会跑同一份清理代码。对照 C++：这就是 RAII，只是 Rust 把它推到了异步里——std::lock_guard 在异常时解锁，Rust 的守卫在 Future 被取消时也解锁。"
+        },
+        {
+          "kind": "callout",
+          "text": "锁、连接、临时文件，凡是“不释放就泄漏”的东西，一律用守卫持有，绝不在取消路径上手写 close()。第 30 天说的“abort 不会跑收尾代码”要修正一个字：abort 不会跑 .await 之后的收尾代码，但守卫的 Drop 照跑——因为 abort 的本质也是 drop Future。项目 3 的连接处理任务里，连接、计时器、上游句柄全用守卫持有，超时和 abort 都不会漏关。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. select!：多个 Future“抢答”，谁先就绪走谁"
+        },
+        {
+          "kind": "paragraph",
+          "text": "timeout 是“一个活 + 一个期限”的特例，通用版是 select!：同时 poll 所有分支，哪个分支的 Future 先就绪就执行哪个分支，剩下的分支被丢掉（也就是被取消——Drop 守卫照跑）。timeout 内部就是 select! 的一个特化：select! { v = fut => Ok(v), _ = sleep(期限) => Err(Elapsed) }。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "tokio::select! {\n    _ = sleep(Duration::from_millis(300)) => println!(\"慢分支\"),\n    _ = sleep(Duration::from_millis(100)) => println!(\"快分支\"),\n}"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "分支是 Future 表达式，不是“先跑再选”：每个分支写“模式 = future => 处理代码”，future 在 select! 里才被 poll。不要在分支里写已经 .await 完的值——那不是抢答，是赛后颁奖。",
+            "多个分支同时就绪时随机选一个：这叫“公平性”，防止某个分支永远饿死。想让某个分支优先，用 biased; 写在 select! 第一行，分支按书写顺序优先——关机信号分支通常要 biased，否则“心跳”和“停工信号”同时就绪时可能先打了心跳才停工。",
+            "else 分支：所有分支都没就绪时立刻走 else，不阻塞——用来写“先看一眼有没有现成结果，没有就去干别的”。",
+            "循环里用 select! 要传 &mut 借用：示例第 5 段的心跳循环里，_ = &mut rx => 借用 oneshot 接收端——因为 select! 会消费分支的 Future，循环里要复用就必须借用。直接写 _ = rx => 编译器会报错“rx 被 move 了”。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "4. 取消安全：不是所有 Future 都能放心地中途丢掉"
+        },
+        {
+          "kind": "paragraph",
+          "text": "“取消就是 drop”听起来很干净，但有一个坑：有些 Future 被 drop 时，活已经干了一半，数据状态是不完整的。Tokio 文档把这叫“取消安全（cancellation safety）”。判断方法就一条：问一句“这个 Future 被 drop 在任意一个 .await 点上，留下的状态还能不能自洽？”能，就是取消安全；不能，就要在 select! 里给它加保护。"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "取消安全的：tokio::time::Sleep（丢了就没了，无副作用）、tokio::sync::mpsc 的 send/recv（取消时消息不会丢——没发出去就是没发，接收端没拿到就是没拿）、oneshot::Receiver 的 recv（取消后值还留在通道里，之后还能再收；只有接收端整个丢掉，发送端 send 才会返回 SendError）。",
+            "要小心的：tokio::io::copy（从读端拷到写端，中途取消时已经拷过去的字节留在了写端——“拷了一半”是合法状态，但你的“一次拷完”的预期被打破了）、TcpStream::read 配 select!（读到一半被取消，缓冲区里的数据归属要想清楚）、任何“先写一半再写另一半”的两步操作（比如先写请求头、再写请求体，中途取消会留一个只有头的畸形请求在对端）。",
+            "保护方法：要么把整个两步操作包进一个 tokio::spawn 的任务里（任务内部不可取消，取消只取消“等它”的那一侧——第 30 天的 JoinHandle 机制），要么在关键区段前后用 select! 的 biased 保证顺序，要么接受“一半”状态并在重连时做清理。项目 3 里“向上游发请求”就是后者：超时取消后，代理直接关掉这个上游连接，不复用——宁可多建一次连接，不留半截请求。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "5. 常见误解与编译报错读法"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "“timeout 会把超时的任务杀掉”——错。timeout 取消的是你传进去的那个 Future；如果是 spawn 出去的任务，timeout(handle) 只取消“你等它”这个等待，任务本身还在跑。想连任务一起停，超时后要补一个 handle.abort()，或者把 timeout 写进任务内部。",
+            "“Elapsed 是 panic”——错。它是 Result 的 Err，正常用 match 处理。timeout(...).await.unwrap() 会把超时变成 panic——反向代理里上游一慢就全站 panic，就是这么写出来的。",
+            "“select! 里多个分支同时就绪会按顺序执行”——错。默认随机选一个；要顺序优先写 biased;。",
+            "“timeout 嵌套没问题”——对，但要想清楚：外层 5 秒、内层 200ms，内层超时返回 Err(Elapsed) 后外层继续跑——内层的 Elapsed 只是“这次没等到”，不是“整个操作失败”。嵌套超时常用来写“每次重试 200ms、总共 5 秒”的重试循环。",
+            "报错读法：select! 循环里写 _ = rx => 会报 use of moved value: rx——因为 select! 会 move 分支的 Future，循环第二次就没了。改成 _ = &mut rx =>，借用而不是 move。同样，timeout 里的 Future 如果借用了局部变量，会报生命周期错误——timeout 要求 Future 是 Send（multi_thread 下），借用栈变量的 Future 不是 'static，要 move 所有权进去。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（tokio 1.54.1，输出见下）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全过。照抄就能跑，需要联网下载 tokio（约 20 秒编译）。"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo new rust-day31 --bin\ncd rust-day31"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Cargo.toml 换成下面这份："
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "code": "[package]\nname = \"rust-day31\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"full\"] }"
+        },
+        {
+          "kind": "paragraph",
+          "text": "把 src/main.rs 换成下面这份完整代码："
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "//! 第 31 天 · 超时与取消：timeout、select! 与取消时的资源释放。\n//!\n//! 五个现象一次看清：\n//! 1. timeout 在期限内完成返回 Ok(结果)，超时返回 Err(Elapsed)；\n//! 2. 超时后被取消的 Future 会被 drop，它持有的资源（连接守卫）照样跑 Drop 收尾；\n//! 3. select! 是\"抢答\"：哪个分支的 Future 先就绪就走哪个；\n//! 4. interval 心跳 + oneshot 停工信号：select! 循环写优雅关机；\n//! 5. timeout 套在 join_next 收集循环外面：批量任务整体设上限，超时后 abort_all。\n//!\n//! 运行：`cargo run`（tokio 1.x，features = [\"full\"]）。\n\nuse std::time::Duration;\nuse tokio::task::JoinSet;\nuse tokio::time::{interval, sleep, timeout, Instant};\n\nasync fn slow_query(ms: u64) -> &'static str {\n    sleep(Duration::from_millis(ms)).await;\n    \"上游返回了数据\"\n}\n\n/// 模拟一个\"连接\"：Drop 时打印收尾，证明取消也会跑清理代码。\nstruct Conn {\n    id: usize,\n}\n\nimpl Drop for Conn {\n    fn drop(&mut self) {\n        println!(\"连接 {} 已关闭（Drop 收尾跑了）\", self.id);\n    }\n}\n\nasync fn work_with_conn(id: usize, ms: u64) -> &'static str {\n    let _conn = Conn { id };\n    sleep(Duration::from_millis(ms)).await;\n    \"干完了\"\n}\n\nasync fn upstream(id: usize, ms: u64) -> usize {\n    sleep(Duration::from_millis(ms)).await;\n    id * 10\n}\n\n#[tokio::main]\nasync fn main() {\n    // ---- 1. timeout 成功：100ms 的活，500ms 的期限 ----\n    match timeout(Duration::from_millis(500), slow_query(100)).await {\n        Ok(v) => println!(\"期限内完成：{v}\"),\n        Err(_) => println!(\"超时了\"),\n    }\n\n    // ---- 2. timeout 命中：500ms 的活，200ms 的期限 ----\n    let start = Instant::now();\n    match timeout(Duration::from_millis(200), slow_query(500)).await {\n        Ok(v) => println!(\"完成了：{v}\"),\n        Err(e) => println!(\n            \"超时：{e}（耗时约 {}ms，活没干完就被停了）\",\n            start.elapsed().as_millis()\n        ),\n    }\n\n    // ---- 3. 取消时 Drop 守卫跑收尾 ----\n    let r = timeout(Duration::from_millis(200), work_with_conn(7, 500)).await;\n    println!(\n        \"带连接的任务：{}\",\n        if r.is_err() {\n            \"超时（Elapsed），但连接已关闭\"\n        } else {\n            \"完成\"\n        }\n    );\n\n    // ---- 4. select! 抢答：谁先就绪走谁 ----\n    tokio::select! {\n        _ = sleep(Duration::from_millis(300)) => println!(\"select：慢分支赢了（不该出现）\"),\n        _ = sleep(Duration::from_millis(100)) => println!(\"select：快分支赢了\"),\n    }\n\n    // ---- 5. interval 心跳 + oneshot 停工：优雅关机 ----\n    let (tx, rx) = tokio::sync::oneshot::channel::<()>();\n    let worker = tokio::spawn(async move {\n        let mut tick = interval(Duration::from_millis(200));\n        let mut rx = rx;\n        loop {\n            tokio::select! {\n                _ = tick.tick() => println!(\"心跳\"),\n                _ = &mut rx => {\n                    println!(\"收到停工信号，收尾后退出\");\n                    break;\n                }\n            }\n        }\n    });\n    sleep(Duration::from_millis(450)).await;\n    let _ = tx.send(());\n    worker.await.unwrap();\n\n    // ---- 6. 批量任务整体超时：timeout 套收集循环，超时后 abort_all ----\n    let mut set = JoinSet::new();\n    for (id, ms) in [(1, 100), (2, 300), (3, 600)] {\n        set.spawn(upstream(id, ms));\n    }\n    let collected = timeout(Duration::from_millis(400), async {\n        let mut done = Vec::new();\n        while let Some(res) = set.join_next().await {\n            done.push(res.unwrap());\n        }\n        done\n    })\n    .await;\n    match collected {\n        Ok(results) => println!(\"全部完成：{results:?}\"),\n        Err(_) => {\n            println!(\"批量任务整体超时：400ms 到了，600ms 那个没等到，取消它\");\n            set.abort_all();\n            while let Some(res) = set.join_next().await {\n                match res {\n                    Ok(v) => println!(\"  赶上了：{v}\"),\n                    Err(e) if e.is_cancelled() => println!(\"  被取消：is_cancelled\"),\n                    Err(e) => println!(\"  其他错误：{e:?}\"),\n                }\n            }\n        }\n    }\n\n    println!(\"main 结束\");\n}"
+        },
+        {
+          "kind": "heading",
+          "text": "运行方法与预期输出"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check"
+        },
+        {
+          "kind": "paragraph",
+          "text": "本机实测 cargo run 输出：期限内完成：上游返回了数据；超时：deadline has elapsed（耗时约 201ms，活没干完就被停了）；连接 7 已关闭（Drop 收尾跑了）；带连接的任务：超时（Elapsed），但连接已关闭；select：快分支赢了；心跳 ×3；收到停工信号，收尾后退出；批量任务整体超时：400ms 到了，600ms 那个没等到，取消它；被取消：is_cancelled；main 结束。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "关键看四组关系：超时那行耗时约 201ms——timeout 在 200ms 整点停掉了 500ms 的活，没多等一毫秒；“连接 7 已关闭”出现在“超时”之前——取消先跑 Drop 收尾，再返回 Elapsed；心跳正好 3 次（interval 首 tick 立即触发，0/200/400ms 各一次，450ms 时停工信号到）；批量任务里 100ms 和 300ms 的两个赶上了、600ms 的那个被 abort_all 取消。cargo clippy 与 cargo fmt --check 应静默通过。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "动手验证两点：把第 2 段的期限从 200ms 改成 600ms，看 Ok 分支的输出——体会“超时与否只看期限与耗时的大小关系”；把第 5 段 sleep(450ms) 改成 sleep(1000ms)，数一数心跳变成几次——体会 interval 首 tick 立即触发、之后每 200ms 一次。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务（30 分钟内完成）"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "超时重试：写一个“上游”函数，前两次调用 sleep 500ms、第三次 sleep 50ms；用 timeout(200ms, 上游) 循环重试最多 3 次，每次超时打印“第 N 次超时，重试”，成功打印“第 N 次成功”。体会：重试循环里 timeout 的 Err(Elapsed) 只是“这次没等到”，不是失败。",
+            "biased 优先：把示例第 5 段改成 biased; 的 select!，停工信号分支写在第一行；再把 main 里的停工信号改成在心跳 tick 的同一时刻发出（sleep 400ms 后发信号，正好撞上第 3 次 tick），跑 5 次看“心跳”和“收到停工信号”的顺序稳不稳定；去掉 biased; 再跑 5 次，对比两次的稳定性差异。",
+            "取消安全实验：写一个“两步写”函数——先 sleep 100ms 打印“写了请求头”，再 sleep 100ms 打印“写了请求体”；用 timeout(150ms, 两步写) 跑一次，看输出停在哪一步；再把同样的两步写包进 tokio::spawn 的任务里、只对 JoinHandle 做 timeout，看输出有什么不同——体会“把不可取消的活包进任务里，取消只取消等待”。",
+            "给项目 3 写超时草图：上游请求超时 2 秒、整体批量超时 5 秒、超时后 abort_all 并记一条 warn 日志；把草图写进卡点清单，明天开工直接用。"
+          ],
+          "verification": "示例 cargo run 四组关系正确、clippy 零警告、fmt 通过；跟练 1 能说清重试循环里 Elapsed 的含义；跟练 3 能说清“包进任务”前后取消行为的差异；卡点清单已更新（项目 3 超时草图）"
+        },
+        {
+          "kind": "heading",
+          "text": "自测题"
+        },
+        {
+          "kind": "paragraph",
+          "text": "5 道自测题，答案可展开查看。"
+        },
+        {
+          "kind": "heading",
+          "text": "今日验收清单"
+        },
+        {
+          "kind": "paragraph",
+          "text": "延伸（非必需）：Tokio 官方教程（tokio.rs，免费在线）“Time / Select”两节可作今晚泛读；《Rust for Rustaceans》第 1 章可继续读。明天第 32 天：异步 I/O 与 TcpListener——写一个能同时服务多个连接的 echo 服务器，为项目 3 的反向代理搭骨架。"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "timeout(期限, future) 返回什么？期限内完成与超时分别对应哪个变体？Elapsed 是 panic 吗？",
+          "a": "返回 Result<T, Elapsed>：期限内完成是 Ok(结果)，到点没完成是 Err(Elapsed)。Elapsed 不是 panic，是 Result 的 Err，用 match 处理；unwrap() 会把超时变成 panic。"
+        },
+        {
+          "q": "超时后被取消的 Future 内部会发生什么？为什么说“取消时资源释放靠 Drop 守卫，而不是手写 close()”？",
+          "a": "Future 被 drop，内部所有局部变量按声明逆序被 drop，它们的 Drop::drop 全部会跑。手写 close() 只能放在 .await 之后的代码里，取消时那些代码一行都不执行；守卫的 Drop 在三种出口（正常返回、panic、取消）都会跑，所以锁、连接、临时文件一律用守卫持有。"
+        },
+        {
+          "q": "select! 多个分支同时就绪时怎么选？想让某个分支优先怎么办？循环里用 select! 等一个 oneshot 信号，为什么要写 &mut rx 而不是 rx？",
+          "a": "默认随机选一个（公平性，防止饿死）；想优先在 select! 第一行写 biased;，分支按书写顺序优先。select! 会 move 分支的 Future，循环里直接写 rx 会在第一次迭代后被 move 掉、第二次报错；写 &mut rx 是借用，可以反复用。"
+        },
+        {
+          "q": "timeout(handle) 能停掉一个 spawn 出去的任务吗？想连任务一起停要怎么做？",
+          "a": "不能。timeout(handle) 只取消“你等它”这个等待，任务本身还在跑。想连任务一起停，超时后补一个 handle.abort()，或者把 timeout 写进任务内部。"
+        },
+        {
+          "q": "什么是“取消安全”？tokio::io::copy 中途被取消会留下什么状态？项目 3 里向上游发请求被超时取消后，为什么应该直接关掉这个上游连接而不是复用？",
+          "a": "取消安全指 Future 被 drop 在任意一个 .await 点上，留下的状态都能自洽。tokio::io::copy 中途取消时已经拷过去的字节留在写端——“拷了一半”是合法状态，但“一次拷完”的预期被打破了。向上游发请求是“先写头、再写体”的两步操作，中途取消会留一个只有头的畸形请求在对端；直接关掉这个上游连接，不复用，宁可多建一次连接，不留半截请求。"
+        }
+      ],
+      "checklist": [
+        "能不查书解释：timeout 与 Elapsed、取消就是 drop、Drop 守卫收尾、select! 抢答与 biased、取消安全的含义",
+        "示例在本机 cargo run 通过，四组关系正确（超时约 201ms 停掉 500ms 的活、连接先关再报 Elapsed、心跳正好 3 次、批量任务 600ms 的被取消），clippy 零警告、fmt 通过",
+        "能说清重试循环里 Elapsed 的含义（跟练 1）",
+        "能说清“把活包进任务”前后取消行为的差异（跟练 3）",
+        "卡点清单已更新（项目 3 超时草图：上游 2 秒、批量 5 秒、超时后 abort_all + warn 日志）"
+      ]
     }
   ]
 }
