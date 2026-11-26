@@ -6291,6 +6291,241 @@
         "能说清“把活包进任务”前后取消行为的差异（跟练 3）",
         "卡点清单已更新（项目 3 超时草图：上游 2 秒、批量 5 秒、超时后 abort_all + warn 日志）"
       ]
+    },
+    {
+      "dayNumber": 32,
+      "weekNumber": 5,
+      "title": "异步 I/O 与 TcpListener：多连接 echo 服务器",
+      "lessonDate": "2026-11-26",
+      "goal": "写出一个能同时服务多个连接的异步 echo 服务器，理解 accept 循环、每连接一个任务与 split 读写分离，为项目 3 的反向代理搭好骨架。",
+      "summary": "TcpListener::bind 监听、accept 循环里每连接 spawn 一个任务、split() 分离读写两半、BufReader::read_line 按行读、read 返回 0 即对端关闭；TCP 粘包与半包要用成帧解决。",
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "label": "TcpListener 与 accept 循环",
+              "minutes": "15 分钟",
+              "detail": "读核心讲解第 1-2 节：监听、accept、每连接一个任务"
+            },
+            {
+              "label": "split 与按行读写",
+              "minutes": "20 分钟",
+              "detail": "读第 3-4 节：读写借用、BufReader、半包与粘包、连接关闭的信号"
+            },
+            {
+              "label": "代码验证与自测",
+              "minutes": "25 分钟",
+              "detail": "敲一遍可运行示例（cargo run / clippy / fmt 三项全过），再开两个 nc 会话验证并发，做跟练与自测题"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. TcpListener::bind 与 accept：监听是“摆摊”，accept 是“接客”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "三行就是服务器的全部主循环：bind 在指定地址上监听，返回的 listener 不是连接，是“等连接的东西”；accept 等下一个客户端连上来，返回 (TcpStream, SocketAddr)，没有连接时这个 Future 一直 pending，执行器把它挂起去干别的活——不占线程、不空转；每来一个连接就 spawn 一个任务去处理，主循环立刻回到 accept 等下一个。这就是“每连接一个任务”的模型。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "let listener = TcpListener::bind(\"127.0.0.1:18032\").await.unwrap();\nloop {\n    let (socket, peer_addr) = listener.accept().await.unwrap();\n    tokio::spawn(handle(socket));\n}",
+          "caption": "服务器主循环：bind 监听、accept 接客、spawn 分活"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照 C++：socket + bind + listen + accept 四步，Rust 里 bind 一步包了前三个。C++ 里 accept 之后通常是每连接一个线程，或者一个 epoll 循环加线程池。Tokio 的做法是第三种：每连接一个任务——任务不是线程，一万个连接就是一万个轻量任务，执行器用几个工作线程轮着 poll 它们。C++ 里 epoll 加回调要手写状态机（“读到一半先存起来，下次事件再续上”），Rust 里 handle 就是一个普通的 async fn，.await 的地方就是状态机的“断点”，编译器帮你生成状态机，你写的还是顺序代码。"
+        },
+        {
+          "kind": "callout",
+          "text": "accept 本身不会限流：客户端连得太快、任务 spawn 得太多，内存会跟着涨。真实服务里要在 accept 循环里加信号量（tokio::sync::Semaphore）限流，项目 3 里会加，今天先知道有这个口子。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 每连接一个任务：为什么不是“一个循环里轮着读所有连接”"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "// 错误示范：不要这样写\nloop {\n    let (socket, _) = listener.accept().await.unwrap();\n    handle(socket).await; // 等这个连接断开才回 accept\n}",
+          "caption": "反面写法：直接 .await 会把 accept 循环堵死"
+        },
+        {
+          "kind": "paragraph",
+          "text": "handle(socket).await 会等这个连接彻底断开才返回——第一个客户端连上来不说话，第二个客户端就永远连不上。这就是第 29 天说的“await 是顺序执行”：一个任务里两个 .await 是串行的，两个任务里的 .await 才是并发的。想让连接并发处理，唯一的办法是把每个连接放进自己的任务。spawn 之后主循环立刻继续 accept，处理连接的活交给新任务。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照第 30 天：spawn 要求 Future 是 Send + 'static，所以 handle(socket) 必须 move 进 socket 的所有权，不能借用主循环里的局部变量。连接任务里想共享的东西（计数器、配置、白名单）用 Arc 包起来 clone 进去——示例里的 Arc<AtomicUsize> 计数器就是这个用法。代价也要算清楚：每个连接一个任务，连接数就是任务数；任务本身很轻，但每个连接还占一个 socket 缓冲区、一个 BufReader 缓冲区。项目 3 的规模（一台代理几百到几千上游连接）完全不用担心。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. split()：一个 TcpStream 为什么不能同时读和写"
+        },
+        {
+          "kind": "paragraph",
+          "text": "TcpStream 的读写方法都要 &mut self：同一个 socket 只有一个 &mut 借用——你不能一边拿着它读、一边拿着它写。echo 服务器还好（先读后写，串行用），但反向代理要“一边从客户端读、一边向上游写”，两个方向同时进行，就必须把读写分开。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "let (reader, mut writer) = socket.split();",
+          "caption": "split() 返回 (ReadHalf, WriteHalf)，读的一半和写的一半各走各的借用"
+        },
+        {
+          "kind": "paragraph",
+          "text": "into_split() 是 owned 版本，返回的两半都是 'static、可以跨任务 move；split() 借用 &mut socket，两半的生命周期绑在 socket 上，只能在当前作用域用。示例的 handle 里用 split() 就够了，client 里用 into_split()，两种都认得就行。"
+        },
+        {
+          "kind": "callout",
+          "text": "报错读法：split() 要求 socket 是 mut——因为 split(&mut self)。写 let (r, w) = socket.split() 时 socket 没声明 mut，编译器会报 cannot borrow socket as mutable，改成 mut socket 就好（今天的示例第一版就栽在这个错上）。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. BufReader 与 read_line：TCP 是字节流，“行”是你自己切出来的"
+        },
+        {
+          "kind": "paragraph",
+          "text": "TCP 只保证“字节按顺序到达”，不保证“一次 read 拿到一次 write 的内容”："
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "粘包：客户端一次写了 \"hello\\nworld\\n\"，服务器一次 read 可能拿到两行；",
+            "半包：客户端写了 \"hello\\n\"，网络可能拆成 \"hel\" 和 \"lo\\n\" 两次到达。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "所以“按行读”不能靠一次 read 完成，得有个缓冲区攒着、攒够一行再交出来——这就是 BufReader 的活。"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "let mut reader = BufReader::new(reader);\nlet mut line = String::new();\nloop {\n    line.clear();\n    match reader.read_line(&mut line).await {\n        Ok(0) => break,               // 对端关闭\n        Ok(_) => { /* line 里是一整行 */ }\n        Err(e) => { /* 读出错 */ break; }\n    }\n}",
+          "caption": "按行读循环：攒够一行才返回，返回 0 表示对端关闭"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "read_line 内部循环读 socket、往内部缓冲里攒，攒到 \\n 才返回 Ok(字节数)。line.clear() 每轮必须调——read_line 是追加到 line 末尾的，不 clear 就会把上一行也留在里面，越攒越长。",
+            "Ok(0) 是关键信号：对端关闭连接时，read 返回 0。这不是错误，是 TCP 的正常语义（对端发了 FIN）。C++ 里 recv 返回 0 也是同一个意思，Rust 只是把它包进了 Result 的 Ok(0)。",
+            "read_line 要求目标是 String，遇到无效 UTF-8 会返回 Err。回显原字节理论上应该用 read_until(b'\\n', &mut Vec<u8>) 走字节路线；示例用 read_line 是为了教学简洁，项目 3 里转发 HTTP 请求体要用字节 API——跟练 2 就是把它改成字节版。"
+          ]
+        },
+        {
+          "kind": "paragraph",
+          "text": "成帧（framing）这个词今天第一次出现，记住它的意思就行：字节流本身没有“一条消息”的边界，“消息从哪到哪”是应用层自己定的规则——按行（\\n 分隔）、按长度前缀（先读 4 字节长度再读正文）、按固定分隔符，都是成帧。HTTP 的成帧是“请求头以 \\r\\n\\r\\n 结束加 Content-Length 定正文长度”，明天 axum 会替你做这件事，但理解“成帧是应用层规则”能帮你读懂所有协议解析代码。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 常见误解与编译报错读法"
+        },
+        {
+          "kind": "bullets",
+          "items": [
+            "“bind 成功就是服务器跑起来了”——错。bind 只是占了端口，accept 循环才是“接客”。bind 之后不写 accept 循环，客户端 connect 会成功（三次握手在内核完成），但没人理它。",
+            "“accept 循环里直接 .await 处理连接”——错，见第 2 节：第一个连接不断开，第二个永远等不到。不 spawn 就没有并发。",
+            "“write 一次就把数据全发出去了”——不一定。AsyncWriteExt::write 返回实际写出的字节数，可能比给的少（内核缓冲区满了）；write_all 内部循环写到全部写出为止。发数据一律用 write_all，除非你手动处理了返回值。",
+            "“read_line 返回 Ok(0) 是出错”——错。这是“对端正常关闭”，break 掉循环、释放连接即可。把它当错误记日志，会把每次正常断开都记成报错。",
+            "“read_line 会清空目标字符串”——错。它是追加，line.clear() 要自己写。忘了 clear 的典型症状：回显越来越长，第二行变成“第一行加第二行”。",
+            "报错读法：socket.split() 报 cannot borrow socket as mutable——socket 没声明 mut；handle(socket) 之后又用 socket 报 use of moved value——socket 的所有权已经 move 进任务了；read_line(&mut line) 报错先检查 line 是不是 String、有没有 use tokio::io::AsyncBufReadExt。"
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（tokio 1.54.1，输出见下）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全过。照抄就能跑，需要联网下载 tokio（约 20 秒编译）。"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo new rust-day32 --bin\ncd rust-day32",
+          "caption": "新建工程"
+        },
+        {
+          "kind": "code",
+          "lang": "toml",
+          "code": "[package]\nname = \"rust-day32\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ntokio = { version = \"1\", features = [\"full\"] }",
+          "caption": "Cargo.toml"
+        },
+        {
+          "kind": "code",
+          "lang": "rust",
+          "code": "//! 第 32 天 · 异步 I/O 与 TcpListener：能同时服务多个连接的 echo 服务器。\n//!\n//! 四个现象一次看清：\n//! 1. accept 循环 + tokio::spawn：每个连接一个任务，连接之间互不阻塞；\n//! 2. split() 把 TcpStream 的读写两半分开，BufReader::read_line 按行读；\n//! 3. read_line 返回 0 表示对端已关闭，是\"连接断开\"的正常信号，不是错误；\n//! 4. 两个客户端先后连上来，各自收到自己的回显；服务器用计数器汇总服务了几个连接。\n//!\n//! 运行：`cargo run`（tokio 1.x，features = [\"full\"]）。\n//! 手动测：另开一个终端 `nc 127.0.0.1 18032`，敲一行回车就收到一行回显，\n//! 再开一个 nc 同时连上来，两个会话互不干扰。\n\nuse std::sync::atomic::{AtomicUsize, Ordering};\nuse std::sync::Arc;\nuse tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};\nuse tokio::net::{TcpListener, TcpStream};\nuse tokio::time::{sleep, Duration};\n\n/// 每个连接一个任务：按行读，读到什么就原样写回去。\nasync fn handle(mut socket: TcpStream, count: Arc<AtomicUsize>) {\n    count.fetch_add(1, Ordering::SeqCst);\n    let (reader, mut writer) = socket.split();\n    let mut reader = BufReader::new(reader);\n    let mut line = String::new();\n    loop {\n        line.clear();\n        match reader.read_line(&mut line).await {\n            Ok(0) => break, // 对端关闭：read_line 返回 0\n            Ok(_) => {\n                if writer.write_all(line.as_bytes()).await.is_err() {\n                    break;\n                }\n            }\n            Err(e) => {\n                println!(\"读出错：{e}\");\n                break;\n            }\n        }\n    }\n}\n\n/// 一个\"客户端\"：连上服务器，发一行，等回显，打印出来。\nasync fn client(text: &str) {\n    let stream = TcpStream::connect(\"127.0.0.1:18032\").await.unwrap();\n    let (reader, mut writer) = stream.into_split();\n    let mut reader = BufReader::new(reader);\n    writer.write_all(text.as_bytes()).await.unwrap();\n    writer.write_all(b\"\\n\").await.unwrap();\n    let mut echo = String::new();\n    reader.read_line(&mut echo).await.unwrap();\n    println!(\"客户端发了 {text:?}，收到回显 {echo:?}\");\n}\n\n#[tokio::main]\nasync fn main() {\n    let listener = TcpListener::bind(\"127.0.0.1:18032\").await.unwrap();\n    println!(\"服务器监听 127.0.0.1:18032\");\n    let count = Arc::new(AtomicUsize::new(0));\n    let server_count = count.clone();\n    let server = tokio::spawn(async move {\n        loop {\n            let (socket, _) = listener.accept().await.unwrap();\n            let c = server_count.clone();\n            tokio::spawn(handle(socket, c));\n        }\n    });\n\n    sleep(Duration::from_millis(50)).await; // 等监听就绪\n    client(\"hello\").await;\n    client(\"rust\").await;\n    sleep(Duration::from_millis(50)).await; // 等服务器收尾计数\n    server.abort();\n    println!(\"服务器共处理了 {} 个连接\", count.load(Ordering::SeqCst));\n}",
+          "caption": "src/main.rs 完整代码"
+        },
+        {
+          "kind": "code",
+          "lang": "bash",
+          "code": "cargo run\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check",
+          "caption": "运行与检查命令"
+        },
+        {
+          "kind": "paragraph",
+          "text": "本机实测 cargo run 输出：服务器监听 127.0.0.1:18032；客户端发了 \"hello\"，收到回显 \"hello\\n\"；客户端发了 \"rust\"，收到回显 \"rust\\n\"；服务器共处理了 2 个连接。"
+        },
+        {
+          "kind": "callout",
+          "text": "关键看三组关系：两个客户端各自收到自己发的那一行的回显——回显没有串到别的连接上；“共处理了 2 个连接”——计数器证明 accept 循环确实接了两个连接；回显里带 \\n——read_line 把换行符也留在 line 里，原样写回去，客户端才认得这是一行。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "手动验证并发：把示例改成常驻服务器（删掉内置 client 调用和最后的 abort），cargo run 后另开两个终端，各跑 nc 127.0.0.1 18032，两个会话里各敲一行，都能立刻收到自己的回显——一个会话里敲字不回车，另一个会话不受影响。本机实测：两个 Python 客户端同时连上、同时发、各自收到自己的回显（first / second），且第二个连接建立后第一个仍在线——accept 加 spawn 的并发是真的同时在线，不是轮流。动手验证两点：把 client(\"hello\") 改成发两行，看回显是不是两行；把 line.clear() 那行删掉再跑，看回显怎么越变越长——体会“read_line 是追加”。"
+        },
+        {
+          "kind": "heading",
+          "text": "跟练任务"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "常驻服务器：把示例的 main 改成“只跑服务器、不跑内置客户端”（删掉 client 调用和最后的 abort），cargo run 后另开终端用 nc 127.0.0.1 18032 连上来，敲几行看回显；再开第二个 nc 会话，验证两个会话同时在线、互不干扰。",
+            "字节版回显：把 read_line(&mut line) 改成 read_until(b'\\n', &mut Vec<u8>)（AsyncBufReadExt::read_until），目标从 String 换成 Vec<u8>；发一行中文或 emoji 验证 UTF-8 之外的内容也能回显——体会“字节流不认 UTF-8”。",
+            "限流：accept 循环里加一个 tokio::sync::Semaphore::new(2)，每个连接先 acquire().await 再 spawn，连接结束时释放许可；开 3 个 nc 会话，验证第 3 个连上后发消息没回显（在等许可），关掉一个会话后第 3 个立刻通——体会“accept 不限流的口子怎么堵”。",
+            "给项目 3 写骨架草图：把 handle 里的“读到什么写回什么”换成“读请求行、向上游转发”需要哪几步（读请求、解析 Host、连上游、双向 copy），写进卡点清单，明天开工直接用。"
+          ],
+          "verification": "示例 cargo run 三组关系正确、clippy 零警告、fmt 通过；跟练 1 两个 nc 会话同时在线各收各的回显；跟练 2 中文/emoji 能回显；卡点清单已更新（项目 3 骨架草图）"
+        }
+      ],
+      "quiz": [
+        {
+          "q": "TcpListener::bind 与 accept 各负责什么？bind 成功后不写 accept 循环，客户端 connect 会怎样？",
+          "a": "bind 在指定地址上监听（占端口），accept 等下一个客户端连上来、返回 (TcpStream, SocketAddr)。bind 成功后不 accept，客户端 connect 仍能成功（三次握手在内核完成），但没人处理它。"
+        },
+        {
+          "q": "为什么 accept 循环里必须 tokio::spawn 每个连接，而不是直接 handle(socket).await？spawn 对 Future 有哪两个约束？",
+          "a": "直接 .await 是串行：第一个连接不断开，accept 循环回不去，第二个连接永远等不到。spawn 把每个连接放进自己的任务，主循环立刻回 accept。约束：Future 必须是 Send + 'static，所以要 move 所有权进去，共享的东西用 Arc。"
+        },
+        {
+          "q": "TcpStream 的读写方法为什么都要 &mut self？split() 与 into_split() 的区别是什么？split() 要求 socket 声明成什么？",
+          "a": "读写都要 &mut self，同一个 socket 只有一个 &mut 借用，不能同时读和写。split() 把读写分成 (ReadHalf, WriteHalf) 两半；split() 借用 &mut socket（两半生命周期绑在 socket 上），into_split() 是 owned 版、两半是 'static 可跨任务 move。split() 要求 socket 声明成 mut。"
+        },
+        {
+          "q": "TCP 粘包与半包是什么意思？BufReader::read_line 是怎么解决“按行读”的？read_line 返回 Ok(0) 表示什么？为什么每轮要 line.clear()？",
+          "a": "TCP 是字节流：一次 write 的内容可能被拆成多次 read（半包），多次 write 的内容可能被一次 read 拿到（粘包）。BufReader 内部攒字节，攒到 \\n 才交出一行。Ok(0) 表示对端已关闭连接，是正常断开、不是错误。read_line 是追加到目标末尾，不 clear() 会把上一行也留下来。"
+        },
+        {
+          "q": "write 与 write_all 的区别是什么？发数据为什么一律用 write_all？",
+          "a": "write 返回实际写出的字节数，可能比给的少；write_all 内部循环写到全部写出为止。发数据一律用 write_all，除非手动处理了 write 的返回值。"
+        }
+      ],
+      "checklist": [
+        "能不查书解释：bind 与 accept 的分工、每连接一个任务、split 读写分离、BufReader 按行读与成帧、Ok(0) 是对端关闭",
+        "示例在本机 cargo run 通过，三组关系正确（各收各的回显、计数器为 2、回显带 \\n），clippy 零警告、fmt 通过",
+        "两个 nc 会话同时在线、互不干扰（跟练 1）",
+        "能说清粘包/半包与“按行”这种成帧方式（跟练 2）",
+        "卡点清单已更新（项目 3 骨架草图：读请求、解析 Host、连上游、双向 copy）"
+      ]
     }
   ]
 }
