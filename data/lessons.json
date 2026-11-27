@@ -6526,6 +6526,206 @@
         "能说清粘包/半包与“按行”这种成帧方式（跟练 2）",
         "卡点清单已更新（项目 3 骨架草图：读请求、解析 Host、连上游、双向 copy）"
       ]
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读核心讲解第 1-2 节：hyper 与 axum 的分工、路由表、axum 0.8 的 {name} 语法",
+              "label": "axum 在哪一层、路由与 handler",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "读第 3-4 节：Path / State / Json 三个提取器、State 为什么要求 Clone、计数器为什么用 AtomicUsize",
+              "label": "提取器与共享状态",
+              "minutes": "20 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（cargo run / clippy / fmt 三项全过），再用 curl 亲手调一遍四个接口，做跟练与自测题",
+              "label": "代码验证与自测",
+              "minutes": "25 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "1. axum 在哪一层：hyper 管 HTTP，axum 管“请求去哪”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 32 天的 echo 服务器是你自己在 TcpListener 上搭的：accept、读字节、按行切、写回去。HTTP 服务在它上面还要多做几件事：解析请求行、解析请求头、按 Content-Length 切出请求体、把 JSON 请求体反序列化、再把响应按“状态行 + 头 + 体”拼回去。自己写这些就是在重复造 HTTP 解析器——这正是框架的活。"
+        },
+        {
+          "items": [
+            "hyper 是 HTTP 协议层：负责把 TCP 字节流解析成“请求”对象、把“响应”对象序列化回字节流。它不管“这个请求该谁处理”。",
+            "axum 是 hyper 之上的 Web 框架：负责路由（/hello/rust 该进哪个函数）、提取器（从请求里取出路径参数、JSON 体、共享状态）、响应转换（handler 返回 String、Json<T>、StatusCode 都能变成合法 HTTP 响应）。",
+            "tokio 在最底层提供 runtime：axum 的 serve 内部就是第 32 天那个 accept 循环加 tokio::spawn，只不过 accept 之后接的是 hyper 的连接处理而不是你写的 handle。",
+            "对照 C++：axum 之于 Rust，大致相当于 cpp-httplib 之于 C++，只不过 axum 的路由和提取器是编译期类型检查的——路由写错、提取器类型对不上，编译就过不去，而不是运行时才 404。",
+            "今天只用 axum，不直接碰 hyper：项目 3 的反向代理同样先用 axum 做入口（接客户端请求、做白名单校验），转发上游时再直接用 hyper 的 client——入口用框架、出口用底层。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 路由与 handler：路由表是一张“方法 + 路径 → 函数”的表"
+        },
+        {
+          "kind": "paragraph",
+          "text": "route(路径, 方法(handler))：get(root) 的意思是“GET 请求进 root 这个函数”。同一个路径可以挂多个方法。handler 必须是一个 async fn，参数只能是提取器，返回值必须是能变成响应的类型（&'static str、String、Json<T>、(StatusCode, Json<T>) 都可以）。axum::serve(listener, app) 把 Router 交给监听器跑起来，内部就是 accept 循环 + 每连接一个任务 + hyper 解析。"
+        },
+        {
+          "kind": "callout",
+          "text": "版本陷阱（今天实测踩到的）：axum 0.8 把路径参数的写法从 :name 改成了 {name}。照旧教程写 /hello/:name，程序会在启动时直接 panic：Path segments must not start with `:`. For capture groups, use `{capture}`. 这不是编译错误，是运行时的 panic——路由表在真正建表时才校验。抄网上的 axum 例子时先看它用的 axum 是哪个大版本，0.7 及以前是 :name，0.8 起是 {name}。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 提取器：handler 的参数就是“声明我需要什么”"
+        },
+        {
+          "kind": "paragraph",
+          "text": "提取器是 axum 最核心的设计：handler 的每个参数都是一个提取器，axum 在调用 handler 之前，按参数类型依次从请求里“取”数据。Path<String> 从 URL 路径里取出 {name} 这一段；Json<EchoIn> 要求 Content-Type: application/json，把请求体反序列化成 EchoIn，Content-Type 不对回 415，JSON 格式不对回 400——都是 axum 在 handler 之前拒绝的，你的 handler 里永远拿不到“半成品”的 body；State<AppState> 从 Router 的共享状态里取出 AppState。"
+        },
+        {
+          "items": [
+            "提取器按参数顺序依次执行。Json 会消费请求体，所以 Json 必须是最后一个提取器——把它写在 State 前面编译会报错。一般顺序是：State、Path、Query 在前，Json 垫底。",
+            "提取器的类型写错，编译器直接拦。今天第一版代码写了 Path(name): String（漏了 Path<...> 包裹），编译器报 E0308: mismatched types, expected String, found Path<_>——参数位置上的 String 不是提取器，axum 只认 Path<String> 这种“提取器类型”。",
+            "提取失败时 handler 不执行：handler 的前置条件由类型系统保证，进了 handler 就不用再判一次。",
+            "对照 C++：cpp-httplib 里你要自己 req.get_param_value(\"name\") 再手动 stoi、手动判空；axum 是把“取参数 + 校验 + 拒绝”收进类型里，handler 签名就是一份“这个接口需要什么”的契约。读别人的 axum 代码时，先读 handler 签名——它告诉你这个接口的全部输入。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 共享状态 State：为什么必须包 Arc，为什么计数器用 AtomicUsize"
+        },
+        {
+          "kind": "paragraph",
+          "text": "每个连接都在自己的任务里跑，每个任务的 handler 都要读到同一份状态——状态必须能被很多任务同时持有。AppState 必须实现 Clone：axum 会在每个请求到来时 clone 一份状态交给 handler。Arc 的 clone 只是引用计数 +1，几乎不花钱；如果状态里直接放 AtomicUsize 而不是 Arc<AtomicUsize>，每次 clone 都会复制一份计数器——每个请求拿到的就是不同的计数器，计数全乱套。忘了写 with_state，编译器会报 State 相关的 trait bound——其实是“Router 不知道状态从哪来”，补上 with_state 就好。计数器用 AtomicUsize 而不用 Mutex<usize>：计数只是“加一、读数”，原子操作一步完成，不需要锁。第 17 天的结论还记得：AtomicUsize 是“无锁的共享整数”，计数器、统计量用它；需要“读-改-写一串操作原子化”时才上 Mutex。这里 fetch_add(1) 返回加之前的值，所以 let n = fetch_add(1) + 1 才是“第几次请求”。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. tracing：结构化日志，info! 的字段就是给机器读的"
+        },
+        {
+          "kind": "paragraph",
+          "text": "println! 打的是给人看的一行字，tracing 打的是结构化事件：每条日志除了消息文本，还带键值字段（message=... count=1）、级别（INFO）、目标模块（rust_day33）、时间戳。终端上看是一行字，接到日志系统里就能按字段过滤、聚合。tracing_subscriber::fmt().init() 在 main 开头调一次，之后所有 info!、debug!、warn! 都会输出。没调 init，info! 静默丢弃——“日志打了但终端没东西”的第一检查点就是 init 有没有调。with_env_filter(\"rust_day33=info\") 只输出 rust_day33 这个 crate 的 info 及以上级别；想临时看 hyper 内部的 debug 日志，设环境变量 RUST_LOG=debug 再跑，不用改代码。info!(name = %name, ...) 里的 % 是“用 Display 格式化这个字段”，不加 % 默认用 Debug。写日志时多带字段、少拼字符串：info!(count = n, \"收到 echo 请求\") 比 info!(\"收到 echo 请求 {}\", n) 更利于后续检索。对照 C++：spdlog 的 info(\"... {}\", n) 是格式化字符串路线；tracing 是“事件 + 字段”路线。项目 3 的请求日志（“哪个域名、耗时多少、有没有命中白名单”）就是靠这些字段做的。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解与编译报错读法"
+        },
+        {
+          "items": [
+            "「axum 的 handler 可以是普通函数」——错。handler 必须是 async fn，axum 在内部 .await 它。写成普通 fn 会报 the trait Handler is not implemented，改成 async fn 就好。",
+            "「路由里的 :name 和 {name} 一回事」——错。axum 0.8 起只认 {name}，:name 在启动时 panic。抄旧教程先看版本。",
+            "「Json 提取器可以写在任意位置」——错。Json 消费请求体，必须是最后一个提取器；写在前面会编译报错。",
+            "「提取器失败了 handler 里再判」——错。提取失败时 axum 直接回 4xx，handler 根本不执行。handler 里只处理“合法输入的业务逻辑”。",
+            "「共享状态直接放 AtomicUsize 就行」——错。State 每次请求都要 clone，状态本身必须是 Clone；计数器要包进 Arc，否则每个请求拿到的是独立副本。",
+            "「println! 和 info! 差不多」——输出上像，用途上差一层：info! 带结构化字段，能被日志系统按字段过滤；println! 只是一行字。服务日志一律用 tracing。",
+            "报错读法：Path(name): String 报 E0308 expected String, found Path<_>——参数位置要写提取器类型 Path<String>；路由 :name 启动 panic 报 Path segments must not start with ':'——改成 {name}；忘了 with_state 报 State 相关的 trait bound——补上 .with_state(state)；info! 打了但终端没东西——检查 tracing_subscriber::fmt().init() 有没有调。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（axum 0.8.9、tokio 1.54.1，输出见下）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全过。照抄就能跑，需要联网下载 axum 等依赖（首次编译约 1 分钟）。"
+        },
+        {
+          "caption": "建工程：cargo new rust-day33 --bin",
+          "code": "cargo new rust-day33 --bin\ncd rust-day33",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "caption": "Cargo.toml",
+          "code": "[package]\nname = \"rust-day33\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\naxum = \"0.8\"\ntokio = { version = \"1\", features = [\"full\"] }\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\ntracing = \"0.1\"\ntracing-subscriber = { version = \"0.3\", features = [\"env-filter\"] }",
+          "kind": "code",
+          "lang": "toml"
+        },
+        {
+          "caption": "src/main.rs（完整代码）",
+          "code": "//! 第 33 天 · axum 写第一个 HTTP 服务：路由、提取器、共享状态与 tracing。\n//!\n//! 四个现象一次看清：\n//! 1. Router::new().route(...) 把\"方法 + 路径\"映射到 handler 函数；\n//! 2. 提取器（Path、State、Json）按类型从请求里\"取\"数据，取不到 axum 自动回 4xx；\n//! 3. 共享状态用 Arc 包起来放进 Router::with_state，handler 用 State 取；\n//! 4. tracing_subscriber::fmt::init() 之后，handler 里的 info! 会按行打到终端。\n//!\n//! 运行：`cargo run`（axum 0.8、tokio 1.x）。\n//! 手动测：服务跑起来后 `curl http://127.0.0.1:18033/hello/rust`，\n//! 再 `curl -X POST -H 'Content-Type: application/json' -d '{\"message\":\"你好\"}' http://127.0.0.1:18033/echo`。\n\nuse axum::{\n    extract::{Path, State},\n    http::StatusCode,\n    response::Json,\n    routing::{get, post},\n    Router,\n};\nuse serde::{Deserialize, Serialize};\nuse std::sync::{\n    atomic::{AtomicUsize, Ordering},\n    Arc,\n};\nuse tokio::io::{AsyncReadExt, AsyncWriteExt};\nuse tokio::net::TcpStream;\nuse tokio::time::{sleep, Duration};\nuse tracing::info;\n\n/// 全服务共享的状态：一个请求计数器。\n/// 必须包进 Arc——每个连接的任务都要 clone 一份句柄。\n#[derive(Clone)]\nstruct AppState {\n    requests: Arc<AtomicUsize>,\n}\n\n/// GET /：最简单的 handler，返回静态字符串。\nasync fn root() -> &'static str {\n    \"hello, axum\\n\"\n}\n\n/// GET /hello/{name}：Path 提取器把路径里的 {name} 段解析成 String。\nasync fn hello(Path(name): Path<String>) -> String {\n    info!(name = %name, \"打招呼\");\n    format!(\"你好，{name}！\\n\")\n}\n\n#[derive(Serialize)]\nstruct Health {\n    status: &'static str,\n    requests: usize,\n}\n\n/// GET /health：State 提取器拿到共享状态，返回 JSON。\nasync fn health(State(state): State<AppState>) -> Json<Health> {\n    Json(Health {\n        status: \"ok\",\n        requests: state.requests.load(Ordering::SeqCst),\n    })\n}\n\n#[derive(Deserialize, Debug)]\nstruct EchoIn {\n    message: String,\n}\n\n#[derive(Serialize)]\nstruct EchoOut {\n    message: String,\n    count: usize,\n}\n\n/// POST /echo：Json 提取器把请求体反序列化成 EchoIn；\n/// Content-Type 不是 application/json 或 JSON 格式不对，axum 直接回 400/415，\n/// handler 根本不会被调用。\nasync fn echo(\n    State(state): State<AppState>,\n    Json(body): Json<EchoIn>,\n) -> (StatusCode, Json<EchoOut>) {\n    let n = state.requests.fetch_add(1, Ordering::SeqCst) + 1;\n    info!(message = %body.message, count = n, \"收到 echo 请求\");\n    (\n        StatusCode::OK,\n        Json(EchoOut {\n            message: body.message,\n            count: n,\n        }),\n    )\n}\n\n/// 一个\"裸 HTTP 客户端\"：不用任何 HTTP 库，用 TcpStream 发原始请求、读原始响应。\n/// 顺带复习第 32 天的成帧：HTTP 请求头以 \\r\\n\\r\\n 结束，请求体长度由 Content-Length 定。\nasync fn raw_request(request: &str) -> String {\n    let mut stream = TcpStream::connect(\"127.0.0.1:18033\").await.unwrap();\n    stream.write_all(request.as_bytes()).await.unwrap();\n    let mut buf = Vec::new();\n    // 带了 Connection: close，服务器回完响应就关连接，read_to_end 才能返回。\n    stream.read_to_end(&mut buf).await.unwrap();\n    String::from_utf8_lossy(&buf).into_owned()\n}\n\n#[tokio::main]\nasync fn main() {\n    // tracing 日志初始化：之后所有 info! 都会按 \"时间 级别 目标: 消息 字段\" 打出来。\n    // 想看更多细节可以设环境变量 RUST_LOG=debug 再跑。\n    tracing_subscriber::fmt()\n        .with_env_filter(\"rust_day33=info\")\n        .init();\n\n    let state = AppState {\n        requests: Arc::new(AtomicUsize::new(0)),\n    };\n    let app = Router::new()\n        .route(\"/\", get(root))\n        .route(\"/hello/{name}\", get(hello))\n        .route(\"/health\", get(health))\n        .route(\"/echo\", post(echo))\n        .with_state(state);\n\n    let listener = tokio::net::TcpListener::bind(\"127.0.0.1:18033\")\n        .await\n        .unwrap();\n    println!(\"服务监听 127.0.0.1:18033\");\n    let server = tokio::spawn(async move {\n        axum::serve(listener, app).await.unwrap();\n    });\n\n    sleep(Duration::from_millis(100)).await; // 等监听就绪\n    println!(\"--- GET / ---\");\n    println!(\n        \"{}\",\n        raw_request(\"GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\").await\n    );\n    println!(\"--- GET /hello/rust ---\");\n    println!(\n        \"{}\",\n        raw_request(\"GET /hello/rust HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\")\n            .await\n    );\n    println!(\"--- GET /health ---\");\n    println!(\n        \"{}\",\n        raw_request(\"GET /health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\").await\n    );\n    let body = r#\"{\"message\":\"你好\"}\"#;\n    let post_req = format!(\n        \"POST /echo HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{}\",\n        body.len(),\n        body\n    );\n    println!(\"--- POST /echo ---\");\n    println!(\"{}\", raw_request(&post_req).await);\n    println!(\"--- GET /health（再看一次计数）---\");\n    println!(\n        \"{}\",\n        raw_request(\"GET /health HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\").await\n    );\n\n    server.abort();\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "运行方法",
+          "code": "cargo run\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "paragraph",
+          "text": "本机实测 cargo run 输出（tracing 行在终端里带颜色，这里去掉颜色码呈现）：服务监听 127.0.0.1:18033；GET / 回 200，hello, axum；GET /hello/rust 之前先出现一行 INFO rust_day33: 打招呼 name=rust，回 你好，rust！；GET /health 回 {\"status\":\"ok\",\"requests\":0}；POST /echo 先出现 INFO 收到 echo 请求 你好 count=1，回 {\"message\":\"你好\",\"count\":1}；最后一次 GET /health 回 {\"status\":\"ok\",\"requests\":1}。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "关键看四组关系：GET /hello/rust 之前先出现一行 INFO 打招呼——tracing 日志确实在 handler 里打出来了；POST /echo 的响应里 count 是 1——计数器在 echo 里加一了；最后一次 GET /health 的 requests 是 1——状态是跨请求共享的同一份，不是每次新建；GET / 的 content-type 是 text/plain、/health 的是 application/json——handler 的返回类型决定了响应类型，不用你手动拼头。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "手动验证：把示例改成常驻服务（删掉内置客户端调用和最后的 abort），cargo run 后另开终端跑 curl http://127.0.0.1:18033/hello/rust 和 curl -X POST -H 'Content-Type: application/json' -d '{\"message\":\"你好\"}' http://127.0.0.1:18033/echo，再故意发一次不带 Content-Type 的 POST（curl -X POST -d '{\"message\":\"你好\"}' http://127.0.0.1:18033/echo），看 axum 是不是回 415 而 handler 里的日志根本没出现——体会“提取失败，handler 不执行”。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "常驻服务 + curl 实测：把示例改成常驻服务，cargo run 后用 curl 依次调四个接口；再故意发一次不带 Content-Type: application/json 的 POST 到 /echo，确认 axum 回 415 且 handler 日志没出现。",
+            "加一个查询参数接口：GET /add?a=3&b=5 返回 {\"sum\": 8}。用 Query 提取器（axum::extract::Query，参数类型是 HashMap<String, String> 或一个 #[derive(Deserialize)] 的 struct）；故意不带参数调一次，看 axum 回什么。",
+            "给计数器加一个读接口：GET /count 返回 {\"echo_requests\": N}；验证“只调 /hello 不调 /echo 时计数不变”，体会“状态是 handler 主动改的，不是每个请求自动改的”。",
+            "日志级别实验：RUST_LOG=debug cargo run 跑一次，看终端里多出哪些行（hyper 的内部日志）；再把 with_env_filter 改成 \"rust_day33=debug\"，只看自己 crate 的 debug，对比两次输出的差别。"
+          ],
+          "verification": "示例 cargo run 四组关系正确、clippy 零警告、fmt 通过；跟练 1 的 415 实测完成；跟练 2 的 /add 能算出正确和、缺参数时知道 axum 回什么；卡点清单已更新（axum 0.8 的 {name} 写法、Json 必须是最后一个提取器）。"
+        },
+        {
+          "kind": "heading",
+          "text": "延伸"
+        },
+        {
+          "kind": "paragraph",
+          "text": "axum 官方文档（docs.rs/axum，免费）“Extractors”一节可作今晚泛读；《Rust for Rustaceans》第 1 章可继续读。明天第 34 天（周六）：项目 3 实操——HTTP 反向代理：把今天的服务改成“接客户端请求、按白名单校验、向上游转发、回写响应”，对位 SPACE 出站网关的结构。"
+        }
+      ],
+      "checklist": [
+        "能不查书解释：axum/hyper/tokio 三层分工、路由表、提取器（Path/State/Json）、State 与 Arc、tracing 结构化日志",
+        "示例在本机 cargo run 通过，四组关系正确（tracing 日志出现、echo 计数为 1、health 跨请求共享计数、响应 Content-Type 按返回类型走），clippy 零警告、fmt 通过",
+        "curl 实测四个接口，并验证不带 Content-Type 的 POST 被 axum 回 415、handler 不执行（跟练 1）",
+        "能说清 axum 0.8 的 {name} 写法与 Json 必须是最后一个提取器",
+        "卡点清单已更新（提取器顺序、State 的 Clone 要求、init 没调日志静默）"
+      ],
+      "dayNumber": 33,
+      "goal": "用 axum 写出第一个 HTTP 服务：路由、提取器、共享状态与 tracing 日志一次打通。",
+      "lessonDate": "2026-11-27",
+      "quiz": [
+        {
+          "a": "tokio 提供 runtime（任务调度、I/O）；hyper 是 HTTP 协议层（解析请求、序列化响应）；axum 是 hyper 之上的 Web 框架（路由、提取器、响应转换）。axum::serve 内部就是 accept 循环 + 每连接一个任务 + hyper 处理连接，只不过处理连接的活交给了 hyper 而不是手写 handle。",
+          "q": "axum、hyper、tokio 三层各负责什么？axum::serve 内部大致在做什么（对照第 32 天的 accept 循环）？"
+        },
+        {
+          "a": "axum 0.8 用 {name}，0.7 及以前用 :name。写 :name 会在启动建路由表时 panic（Path segments must not start with ':'），不是编译错——路由表在运行时才校验，编译器只检查 handler 签名。",
+          "q": "axum 0.8 的路径参数写法是什么？照旧教程写 :name 会发生什么（编译错还是运行时 panic）？为什么是运行时才发现？"
+        },
+        {
+          "a": "提取器是 handler 参数位置上的类型，axum 在调用 handler 前按参数类型从请求里取数据：Path 取路径段、State 取共享状态、Json 取 JSON 请求体。提取失败时 axum 直接回 4xx（400/415），handler 不执行。Json 消费请求体，必须是最后一个提取器。",
+          "q": "提取器是什么？Path、State、Json 各从请求的哪部分取数据？提取失败时 handler 会不会被调用？Json 在参数顺序上有什么要求？"
+        },
+        {
+          "a": "每个连接的任务都要持有同一份状态，Arc 让多任务共享同一份数据；State 每次请求都要 clone，所以 AppState 必须实现 Clone（Arc 的 clone 只加引用计数）。计数器用 AtomicUsize 是因为“加一、读数”一步原子操作就够了，不需要锁。fetch_add(1) 返回加之前的值，所以要 + 1 才是第几次请求。",
+          "q": "共享状态为什么要包进 Arc？AppState 必须实现什么 trait？计数器为什么用 AtomicUsize 而不是 Mutex<usize>？fetch_add(1) 返回的是加之前还是加之后的值？"
+        },
+        {
+          "a": "println! 打一行给人看的字，info! 打结构化事件（消息 + 键值字段 + 级别 + 模块 + 时间），能被日志系统按字段过滤聚合。没调 init，info! 静默丢弃。RUST_LOG=debug 是环境变量，临时把日志级别调到 debug，不用改代码。",
+          "q": "tracing 的 info! 与 println! 有什么本质区别？tracing_subscriber::fmt().init() 没调会怎样？RUST_LOG=debug 是干什么的？"
+        }
+      ],
+      "summary": "axum 路由 + Path/State/Json 提取器 + Arc 共享状态 + tracing 日志：把昨天的裸 TCP 服务器升级成真正的 HTTP 服务。",
+      "title": "用 axum 写第一个 HTTP 服务",
+      "weekNumber": 5
     }
   ]
 }
