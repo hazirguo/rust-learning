@@ -6726,6 +6726,213 @@
       "summary": "axum 路由 + Path/State/Json 提取器 + Arc 共享状态 + tracing 日志：把昨天的裸 TCP 服务器升级成真正的 HTTP 服务。",
       "title": "用 axum 写第一个 HTTP 服务",
       "weekNumber": 5
+    },
+    {
+      "body": [
+        {
+          "kind": "timeTable",
+          "rows": [
+            {
+              "detail": "读第 1-2 节：入口—策略—出口三段、对位出站网关、白名单“先策略后网络”",
+              "label": "反向代理结构与白名单",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "读第 3 节：方法 / 头 / 体搬运、四个跳过头的原因、legacy Client 与 Full",
+              "label": "转发与 hyper 客户端",
+              "minutes": "15 分钟"
+            },
+            {
+              "detail": "读第 4-5 节：timeout 的包法、403 / 502 / 504 映射、elapsed_ms 日志",
+              "label": "超时、状态码与日志",
+              "minutes": "10 分钟"
+            },
+            {
+              "detail": "敲一遍可运行示例（cargo run / clippy / fmt 三项全过），curl 实测五种情况，做跟练与自测题",
+              "label": "代码验证与自测",
+              "minutes": "20 分钟"
+            }
+          ]
+        },
+        {
+          "kind": "heading",
+          "text": "核心讲解"
+        },
+        {
+          "kind": "heading",
+          "text": "1. 反向代理是什么：入口—策略—出口，三段式"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 33 天的 axum 服务是“终点”：请求进来，handler 自己算答案、自己回响应。反向代理不是终点，是“中转站”：请求进来，代理不算答案，而是把它交给另一个服务（上游），再把上游的答案搬回来。结构永远是三段：入口接客户端请求（axum 干这个——路由、解析请求行与请求头、收请求体），策略决定“这个请求允不允许出去”（今天只有一条策略：白名单），出口向上游发请求、拿响应（hyper 客户端干这个）。今天的入口只有一个路由：/proxy/{host}/{*rest}，{host} 是目标上游，{*rest} 是上游路径。"
+        },
+        {
+          "kind": "paragraph",
+          "text": "对照你正在研究的系统：SPACE 的出站网关就是这个结构放大后的样子——入口接沙箱里应用的出站请求，策略层查域名白名单与凭据注入规则，出口再把请求发往外网。今天的代理是它的最小模型：白名单、超时、请求日志三件套都在，缺的是配置文件、流式透传与凭据注入——那些在第 6 周补。对照 C++：nginx 的 proxy_pass、Envoy 的路由转发，都是这个三段结构的产品化形态。"
+        },
+        {
+          "kind": "heading",
+          "text": "2. 白名单：策略先行，非法目标连一次 TCP 都不建"
+        },
+        {
+          "kind": "paragraph",
+          "text": "白名单校验写在 handler 的最开头——在拼上游地址之前、在建 hyper 请求之前、在任何网络 I/O 之前。顺序就是策略本身：先校验、后建连。如果顺序反过来——先向上游发了请求、拿到响应才想起来查白名单——白名单就只剩“事后记账”的作用：非法目标的连接已经建过了，攻击者已经能让你的代理去连内网地址（这就是 SSRF，服务端请求伪造）。代理的安全边界不在“回什么状态码”，而在“为谁建连接”。"
+        },
+        {
+          "caption": "白名单校验：handler 开头第一件事",
+          "code": "if !state.allowed.contains(&host) {\n    return (StatusCode::FORBIDDEN, format!(\"host {host} 不在白名单里\\n\")).into_response();\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "今天的白名单是写死在代码里的 HashSet（127.0.0.1:18034 与一个没人监听的 127.0.0.1:19999，后者专门用来演示 502）。写死是故意的：先把“查表”这个动作做对，下周再把它抽成配置文件。注意：白名单查的是目标 host（URL 里的 {host}），不是客户端的 Host 请求头——策略要管的是“请帮我连谁”，不是“我在跟哪个代理说话”。"
+        },
+        {
+          "kind": "heading",
+          "text": "3. 转发：方法、请求头、请求体，原样搬运"
+        },
+        {
+          "kind": "paragraph",
+          "text": "转发不是“重新写一个请求”，是“把收到的请求搬到上游”。要搬四样：方法、目标地址、请求头、请求体；拿回来也要搬四样：状态码、响应头、响应体。四个请求头不能照抄：host（hyper 按目标 URI 自己填）、connection 与 transfer-encoding（逐跳头，只在相邻两节点之间有效）、content-length（体重新构造后长度由 hyper 按实际 body 算）。响应头只跳过 connection 与 transfer-encoding 两个逐跳头；content-length 照抄没问题，因为响应体已经收满、长度与之一致。"
+        },
+        {
+          "caption": "hyper 客户端：legacy Client 自带连接池，build_http 只建 http 连接",
+          "code": "let client = Client::builder(TokioExecutor::new()).build_http();",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "Client 必须放进 State 里共享：连接池是客户端内部的状态，每次请求新建一个 Client，连接池就丢了，每次转发都要重新建 TCP。Client 的 clone 是浅拷贝——内部是 Arc，clone 一份句柄几乎不花钱，和第 33 天 AppState 里 Arc<AtomicUsize> 的道理一样。请求体用 http_body_util::Full<Bytes>：Full 的意思是“体已经完整在内存里了，一次给完”，axum 的 handler 收到的 Bytes 正好包进去。"
+        },
+        {
+          "kind": "heading",
+          "text": "4. 超时与状态码映射：timeout 包住“等到响应头”这一段"
+        },
+        {
+          "kind": "paragraph",
+          "text": "第 31 天的 timeout 第一次用在真实位置上：timeout(Duration::from_secs(2), state.client.request(req)) 包住的是“把请求发出去、等到上游响应头”这一段。超时时里面的 future 被 drop——第 31 天的取消语义：future 被丢弃就是取消。但取消的只是代理侧的等待：上游服务器里的 /slow handler 不受影响，它仍在自己的服务里睡满 3 秒再回响应，只是那时已经没人读了。"
+        },
+        {
+          "items": [
+            "403 Forbidden：策略拒绝——host 不在白名单，请求合法但不允许去这个目标",
+            "504 Gateway Timeout：上游太慢——连上了，2 秒等不到响应头",
+            "502 Bad Gateway：上游坏了——连不上、读响应体失败",
+            "上游正常返回 500 时代理原样回 500：代理只搬运，不改业务状态码；502 只留给“代理与上游之间的通信失败”"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "callout",
+          "text": "今天的局限（先记下来，下周改）：timeout 只包住了“等响应头”，第 5 步“收响应体”不在超时内——上游响应头回得快、响应体拖 10 秒才发完，今天的代理会一直等下去。下周把响应体改成流式透传时，超时要重新设计。"
+        },
+        {
+          "kind": "heading",
+          "text": "5. 请求日志：一行里要有 host、path、status、elapsed_ms"
+        },
+        {
+          "caption": "Instant 记一次开头，结束时 elapsed 算耗时",
+          "code": "let started = Instant::now();\n// ……转发……\ninfo!(host = %host, path = %rest, status = status.as_u16(),\n      elapsed_ms = started.elapsed().as_millis(), \"代理完成\");",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "kind": "paragraph",
+          "text": "host 是“去了哪”、path 是“去了哪条路”、status 是“结果如何”、elapsed_ms 是“花了多久”，四条缺一不可：没有 elapsed_ms，事后看不出哪次转发慢；没有 host，分不清慢的是哪个上游。白名单拒绝与超时也各记一行（状态码 403 / 504 直接写进字段里），这样“过去一小时拒绝了多少次、超时了多少次”都能按字段聚合出来——这就是第 33 天说的“字段是给机器读的”。"
+        },
+        {
+          "kind": "heading",
+          "text": "6. 常见误解与编译报错读法"
+        },
+        {
+          "items": [
+            "“代理就是把请求原样发过去”——错。四个请求头（host、connection、content-length、transfer-encoding）不能照抄，要么让 hyper 重填、要么根本不该透传。",
+            "“白名单校验放哪都行”——错。必须在建连接之前，否则非法目标的连接已经建过了，白名单只剩记账作用。",
+            "“timeout 包住整个 handler 就行”——错。timeout 只包它包住的那个 future；今天它只包“等响应头”，读体不在内。",
+            "“502 和 504 差不多”——差在责任方：502 是上游坏了（连不上），504 是上游太慢（连上了，等不到响应）。",
+            "“每次转发新建一个 Client 更干净”——错。Client 带连接池，新建等于丢掉连接池、每次重建 TCP；要放进 State 共享，clone 是浅拷贝。",
+            "“上游回 500，代理应该回 502”——错。代理原样搬运上游的状态码，500 就是 500。",
+            "报错读法：Client 的泛型写错（漏了 Full<Bytes>）会报一长串 trait bound——照抄 Client<hyper_util::client::legacy::connect::HttpConnector, Full<Bytes>>；路由写 /proxy/:host/... 会在启动时 panic（axum 0.8 用 {name}，通配符是 {*rest}）；Request::builder().uri(...) 报 URI 解析错——检查拼出来的 target 是不是少了 http:// 前缀；body 提取器（Bytes）必须写在参数最后。"
+          ],
+          "kind": "bullets"
+        },
+        {
+          "kind": "heading",
+          "text": "可运行代码示例"
+        },
+        {
+          "kind": "paragraph",
+          "text": "下面这份代码已在本机实际验证通过：cargo run（axum 0.8.9、hyper 1.13.0、hyper-util 0.1.21、http-body-util 0.1.5、tokio 1.54.1）、cargo clippy --all-targets -- -D warnings、cargo fmt --check 三项全过。一个进程里跑两个服务：上游模拟服务 127.0.0.1:18034（/hello、/slow 睡 3 秒、/echo），反向代理 127.0.0.1:18035。"
+        },
+        {
+          "caption": "Cargo.toml",
+          "code": "[package]\nname = \"rust-day34\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\naxum = \"0.8\"\ntokio = { version = \"1\", features = [\"full\"] }\nserde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\nhyper = { version = \"1\", features = [\"client\", \"http1\"] }\nhyper-util = { version = \"0.1\", features = [\"client\", \"client-legacy\", \"tokio\"] }\nhttp-body-util = \"0.1\"\ntracing = \"0.1\"\ntracing-subscriber = { version = \"0.3\", features = [\"env-filter\"] }",
+          "kind": "code",
+          "lang": "toml"
+        },
+        {
+          "caption": "src/main.rs（完整代码）",
+          "code": "//! 第 34 天 · 项目 3 实操：HTTP 反向代理（上）——白名单、转发与超时。\n//!\n//! 一个进程里跑两个服务：\n//! - 上游模拟服务 127.0.0.1:18034：/hello、/slow（睡 3 秒）、/echo；\n//! - 反向代理 127.0.0.1:18035：接 `GET /proxy/{host}/{*rest}`，\n//!   先查白名单（不在白名单 → 403），再用 hyper 客户端向上游转发，\n//!   2 秒超时（超时 → 504），上游连不上 → 502，全程 tracing 记请求日志。\n//!\n//! 运行：`cargo run`（axum 0.8、hyper 1.x、tokio 1.x）。\n//! 手动测：把 main 末尾的自测与 abort 删掉改成常驻服务，再用 curl 调：\n//! `curl http://127.0.0.1:18035/proxy/127.0.0.1:18034/hello`。\n\nuse std::{\n    collections::HashSet,\n    sync::Arc,\n    time::{Duration, Instant},\n};\n\nuse axum::{\n    body::{Body, Bytes},\n    extract::{Path, State},\n    http::{header, HeaderMap, Method, StatusCode, Uri},\n    response::{IntoResponse, Json, Response},\n    routing::{get, post},\n    Router,\n};\nuse http_body_util::{BodyExt, Full};\nuse hyper::Request;\nuse hyper_util::{client::legacy::Client, rt::TokioExecutor};\nuse serde_json::json;\nuse tokio::{\n    io::{AsyncReadExt, AsyncWriteExt},\n    net::{TcpListener, TcpStream},\n    time::{sleep, timeout},\n};\nuse tracing::info;\n\n/// 代理的共享状态：一个可 clone 的 hyper 客户端 + 白名单。\n#[derive(Clone)]\nstruct ProxyState {\n    client: Client<hyper_util::client::legacy::connect::HttpConnector, Full<Bytes>>,\n    allowed: Arc<HashSet<String>>,\n}\n\n/// 上游模拟服务：GET /hello。\nasync fn upstream_hello() -> Json<serde_json::Value> {\n    Json(json!({ \"upstream\": \"hello\", \"path\": \"/hello\" }))\n}\n\n/// 上游模拟服务：GET /slow，故意睡 3 秒——用来触发代理的 2 秒超时。\nasync fn upstream_slow() -> Json<serde_json::Value> {\n    sleep(Duration::from_secs(3)).await;\n    Json(json!({ \"upstream\": \"slow\" }))\n}\n\n/// 上游模拟服务：POST /echo，把收到的 JSON 原样打回去。\nasync fn upstream_echo(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {\n    Json(json!({ \"upstream\": \"echo\", \"got\": body }))\n}\n\n/// 代理 handler：`GET /proxy/{host}/{*rest}`。\n/// 顺序刻意写成“先策略、后网络”：白名单不过直接 403，根本不建 TCP 连接。\nasync fn proxy_handler(\n    State(state): State<ProxyState>,\n    Path((host, rest)): Path<(String, String)>,\n    uri: Uri,\n    method: Method,\n    headers: HeaderMap,\n    body: Bytes,\n) -> Response {\n    let started = Instant::now();\n\n    // 第 1 步：白名单校验。host 不在白名单里 → 403，零网络 I/O。\n    if !state.allowed.contains(&host) {\n        info!(host = %host, path = %rest, status = 403, \"白名单拒绝\");\n        return (StatusCode::FORBIDDEN, format!(\"host {host} 不在白名单里\\n\")).into_response();\n    }\n\n    // 第 2 步：拼上游地址，保留查询串。\n    let mut target = format!(\"http://{host}/{rest}\");\n    if let Some(query) = uri.query() {\n        target.push('?');\n        target.push_str(query);\n    }\n\n    // 第 3 步：建 hyper 请求。方法、请求头、请求体原样搬过去；\n    // host、connection、content-length、transfer-encoding 这四个头\n    // 交给 hyper 自己填（host 由目标地址定，长度由 body 定）。\n    let mut builder = Request::builder().method(method.clone()).uri(&target);\n    for (name, value) in headers.iter() {\n        if name == header::HOST\n            || name == header::CONNECTION\n            || name == header::CONTENT_LENGTH\n            || name == header::TRANSFER_ENCODING\n        {\n            continue;\n        }\n        builder = builder.header(name, value);\n    }\n    let req = match builder.body(Full::new(body)) {\n        Ok(req) => req,\n        Err(err) => {\n            info!(host = %host, path = %rest, status = 400, error = %err, \"构造上游请求失败\");\n            return (StatusCode::BAD_REQUEST, format!(\"构造请求失败：{err}\\n\")).into_response();\n        }\n    };\n\n    // 第 4 步：2 秒超时包住转发。超时 → 504；上游连不上/出错 → 502。\n    let upstream = timeout(Duration::from_secs(2), state.client.request(req)).await;\n    let resp = match upstream {\n        Err(_) => {\n            info!(host = %host, path = %rest, status = 504, elapsed_ms = started.elapsed().as_millis(), \"上游超时\");\n            return (StatusCode::GATEWAY_TIMEOUT, \"上游 2 秒内没有响应\\n\").into_response();\n        }\n        Ok(Err(err)) => {\n            info!(host = %host, path = %rest, status = 502, error = %err, \"上游出错\");\n            return (StatusCode::BAD_GATEWAY, format!(\"上游出错：{err}\\n\")).into_response();\n        }\n        Ok(Ok(resp)) => resp,\n    };\n\n    // 第 5 步：把上游响应的状态码、响应头、响应体搬回客户端。\n    // 响应体先收满再回（今天先不做流式透传，第 6 周再讲）。\n    let status = resp.status();\n    let mut builder = Response::builder().status(status);\n    for (name, value) in resp.headers().iter() {\n        if name == header::CONNECTION || name == header::TRANSFER_ENCODING {\n            continue;\n        }\n        builder = builder.header(name, value);\n    }\n    let body_bytes = match resp.into_body().collect().await {\n        Ok(collected) => collected.to_bytes(),\n        Err(err) => {\n            info!(host = %host, path = %rest, status = 502, error = %err, \"读上游响应体失败\");\n            return (StatusCode::BAD_GATEWAY, \"读上游响应失败\\n\").into_response();\n        }\n    };\n    info!(\n        host = %host,\n        path = %rest,\n        status = status.as_u16(),\n        elapsed_ms = started.elapsed().as_millis(),\n        \"代理完成\"\n    );\n    builder.body(Body::from(body_bytes)).unwrap()\n}\n\n/// 裸 TCP 客户端：发原始 HTTP 请求、读原始响应（复用第 32、33 天的手法）。\nasync fn raw_request(port: u16, request: &str) -> String {\n    let mut stream = TcpStream::connect(format!(\"127.0.0.1:{port}\"))\n        .await\n        .unwrap();\n    stream.write_all(request.as_bytes()).await.unwrap();\n    let mut buf = Vec::new();\n    stream.read_to_end(&mut buf).await.unwrap();\n    String::from_utf8_lossy(&buf).into_owned()\n}\n\n#[tokio::main]\nasync fn main() {\n    tracing_subscriber::fmt()\n        .with_env_filter(\"rust_day34=info\")\n        .init();\n\n    // 上游模拟服务：18034。\n    let upstream = Router::new()\n        .route(\"/hello\", get(upstream_hello))\n        .route(\"/slow\", get(upstream_slow))\n        .route(\"/echo\", post(upstream_echo));\n    let upstream_listener = TcpListener::bind(\"127.0.0.1:18034\").await.unwrap();\n    let upstream_server =\n        tokio::spawn(async move { axum::serve(upstream_listener, upstream).await.unwrap() });\n\n    // 反向代理：18035。白名单只放两个：真实上游 18034，和一个没人监听的\n    // 19999（用来演示“白名单过了但上游连不上 → 502”）。\n    let state = ProxyState {\n        client: Client::builder(TokioExecutor::new()).build_http(),\n        allowed: Arc::new(\n            [\"127.0.0.1:18034\", \"127.0.0.1:19999\"]\n                .iter()\n                .map(|s| s.to_string())\n                .collect(),\n        ),\n    };\n    let proxy = Router::new()\n        .route(\n            \"/proxy/{host}/{*rest}\",\n            get(proxy_handler).post(proxy_handler),\n        )\n        .with_state(state);\n    let proxy_listener = TcpListener::bind(\"127.0.0.1:18035\").await.unwrap();\n    println!(\"上游监听 127.0.0.1:18034，代理监听 127.0.0.1:18035\");\n    let proxy_server =\n        tokio::spawn(async move { axum::serve(proxy_listener, proxy).await.unwrap() });\n\n    sleep(Duration::from_millis(100)).await; // 等两个监听就绪\n\n    println!(\"--- 1. 命中白名单，正常转发 ---\");\n    println!(\n        \"{}\",\n        raw_request(\n            18035,\n            \"GET /proxy/127.0.0.1:18034/hello HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\"\n        )\n        .await\n    );\n    println!(\"--- 2. 不在白名单 → 403 ---\");\n    println!(\n        \"{}\",\n        raw_request(\n            18035,\n            \"GET /proxy/evil.example.com/hello HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\"\n        )\n        .await\n    );\n    println!(\"--- 3. 上游睡 3 秒，代理 2 秒超时 → 504 ---\");\n    println!(\n        \"{}\",\n        raw_request(\n            18035,\n            \"GET /proxy/127.0.0.1:18034/slow HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\"\n        )\n        .await\n    );\n    let body = r#\"{\"message\":\"你好\"}\"#;\n    let post_req = format!(\n        \"POST /proxy/127.0.0.1:18034/echo HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{}\",\n        body.len(),\n        body\n    );\n    println!(\"--- 4. POST 带 JSON 体转发 ---\");\n    println!(\"{}\", raw_request(18035, &post_req).await);\n    println!(\"--- 5. 白名单过了但上游没人监听 → 502 ---\");\n    println!(\n        \"{}\",\n        raw_request(\n            18035,\n            \"GET /proxy/127.0.0.1:19999/hello HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\nConnection: close\\r\\n\\r\\n\"\n        )\n        .await\n    );\n\n    proxy_server.abort();\n    upstream_server.abort();\n}",
+          "kind": "code",
+          "lang": "rust"
+        },
+        {
+          "caption": "运行方法",
+          "code": "cargo run\ncargo clippy --all-targets -- -D warnings\ncargo fmt --check",
+          "kind": "code",
+          "lang": "bash"
+        },
+        {
+          "kind": "callout",
+          "text": "本机实测 cargo run 输出（已验证）：第 1 组 200 且日志 elapsed_ms=1；第 2 组 403，只有一行“白名单拒绝”日志、没有任何建连痕迹；第 3 组正好 2 秒（elapsed_ms=2001）回 504，上游的 3 秒根本没等完；第 4 组 POST 的 JSON 体原样到了上游又原样打回来；第 5 组 502，错误字段写明 client error (Connect)。手动验证：把示例改成常驻服务（删掉内置客户端调用和最后的 abort），cargo run 后用 curl 调 http://127.0.0.1:18035/proxy/127.0.0.1:18034/hello 与 http://127.0.0.1:18035/proxy/evil.example.com/hello，对比两次终端日志。"
+        },
+        {
+          "kind": "practice",
+          "steps": [
+            "常驻服务 + curl 实测五种情况：把示例改成常驻服务，用 curl 依次调通 200 / 403 / 504 / POST 回显 / 502 五种情况，记录每种情况终端里对应的 tracing 日志行（重点看第 3 种的 elapsed_ms 是不是 2000 左右）。",
+            "超时改成可配：把 2 秒超时改成启动时读环境变量 PROXY_TIMEOUT_SECS（没设则默认 2），PROXY_TIMEOUT_SECS=1 cargo run 与 PROXY_TIMEOUT_SECS=5 cargo run 各跑一次调 /slow，看 504 出现时机怎么变、5 秒时 /slow 是不是反而 200 了（上游只睡 3 秒）。",
+            "白名单改成环境变量配置：启动时读 PROXY_ALLOW（逗号分隔，如 PROXY_ALLOW=127.0.0.1:18034,evil.example.com），不设则默认只有 127.0.0.1:18034；把 evil.example.com 放进白名单重启一次，验证它从 403 变成 502（白名单过了，但它连不上）——体会“策略是配置，不是代码”。",
+            "上游提速实验：把上游 /slow 的 sleep 从 3 秒改成 0.5 秒，再调一次代理，看 200 与 elapsed_ms（应在 500 毫秒左右），确认“超时没触发时，elapsed_ms 就是上游真实耗时”。"
+          ],
+          "verification": "示例 cargo run 五组关系正确、clippy 零警告、fmt 通过；跟练 1 的五种情况都用 curl 测到且能说出每个状态码的含义；跟练 2 或跟练 3 完成一项；卡点清单已更新（四个跳过头、timeout 只包等响应头、Client 要共享。"
+        }
+      ],
+      "checklist": [
+        "能不查书解释：反向代理三段结构、白名单“先策略后网络”、四个跳过头、timeout 的包法、403 / 502 / 504 的分工",
+        "示例在本机 cargo run 通过，五组关系正确（200 转发 1 毫秒、403 零建连、504 在 2 秒整触发、POST 体原样回显、502 报连接错误），clippy 零警告、fmt 通过",
+        "curl 实测五种情况，并能说出每种状态码对应的责任方",
+        "能说清 timeout 只包“等响应头”、读体不在超时内的局限",
+        "卡点清单已更新（逐跳头、Client 共享、状态码映射）"
+      ],
+      "dayNumber": 34,
+      "goal": "跑通反向代理最小闭环：白名单拒绝、hyper 转发、2 秒超时与请求日志。",
+      "lessonDate": "2026-11-28",
+      "quiz": [
+        {
+          "a": "入口是 axum（接请求、路由、解析），策略是白名单（决定允不允许去这个目标），出口是 hyper 客户端（建连接、发请求、读响应）。白名单必须在建连接之前校验，否则非法目标的连接已经建过——攻击者能让代理去连内网地址（SSRF），白名单只剩事后记账。",
+          "q": "反向代理“入口—策略—出口”三段各由谁负责？白名单为什么必须在建连接之前校验？顺序反过来会有什么安全后果？"
+        },
+        {
+          "a": "请求头跳过 host（hyper 按目标 URI 自己填）、connection 与 transfer-encoding（逐跳头，只在相邻两节点间有效）、content-length（体重新构造后长度由 hyper 按实际 body 算）。响应头只跳过 connection 与 transfer-encoding 两个逐跳头；content-length 可以照抄，因为响应体已经收满、长度与之一致。",
+          "q": "代理转发时，请求头里哪四个要跳过、为什么？响应头又跳过哪两个？content-length 为什么请求侧跳过、响应侧可以照抄？"
+        },
+        {
+          "a": "只包 client.request(req)——“发请求、等到响应头”这一段。客户端在第 2 秒收到 504（实测 elapsed_ms=2001）。超时取消的只是代理侧的等待，上游服务器里的 /slow handler 不受影响，仍会睡满 3 秒（只是那时已没人读它的响应）。",
+          "q": "timeout 包住的是哪一段？上游睡 3 秒、超时 2 秒时，客户端在第几秒收到 504？超时后，上游服务器里的 /slow handler 还在跑吗？"
+        },
+        {
+          "a": "403 是策略拒绝（host 不在白名单）；502 是上游坏了（连不上、读体失败）；504 是上游太慢（连上了，2 秒等不到响应头）。上游回 500 时代理原样回 500——代理只搬运，不改业务状态码；502 只留给“代理与上游之间的通信失败”。",
+          "q": "403 / 502 / 504 各自对应什么情况？上游正常返回 500 时，代理回什么状态码？为什么？"
+        },
+        {
+          "a": "Client 内部带连接池，每次新建等于丢掉连接池、每次重建 TCP；放进 State 共享，clone 是浅拷贝（内部 Arc 共享同一份连接池）。先收满再回简单可靠、能统一记日志，但代价是大响应体占内存、首字节延迟高（要等上游全量返回才开始回客户端）；第 6 周改流式透传。",
+          "q": "hyper 的 legacy Client 为什么要放进 State 里共享？Client 的 clone 是深拷贝还是浅拷贝？响应体先收满再回有什么代价？"
+        }
+      ],
+      "summary": "axum 做入口、hyper 做出口，白名单先行校验，超时 2 秒回 504，403/502/504 各有分工。",
+      "title": "项目 3 实操：HTTP 反向代理（上）——白名单、转发与超时",
+      "weekNumber": 5
     }
   ]
 }
